@@ -11,7 +11,7 @@ services:
   # Microservizio FastAPI: preflight + estrazione testo
   # ----------------------------------------------------------
   cv-extractor:
-    image: ghcr.io/tuo-utente/cv-preflight/cv-extractor:latest
+    image: ghcr.io/davidenas/cv-preflight/cv-extractor:sha-116a1f1
     container_name: cv-extractor
     restart: unless-stopped
     ports:
