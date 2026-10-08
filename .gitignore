@@ -1,0 +1,121 @@
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Docker
+# ============================================================
+# Non committare immagini esportate
+*.tar
+*.tar.gz
+# Ma tieni i Dockerfile
+!Dockerfile
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+*.token
+
+# ============================================================
+# Dati di test / output
+# ============================================================
+# Non committare CV reali (GDPR!)
+data/
+samples/*.pdf
+samples/*.docx
+samples/*.jpg
+samples/*.png
+!samples/.gitkeep
+
+# Output locali
+logs/
+tmp/
+*.log
+out/
+output/
+
+# ============================================================
+# n8n (se lo aggiungi dopo)
+# ============================================================
+n8n-data/
+.n8n/
+
+# ============================================================
+# Portainer
+# ============================================================
+portainer-data/

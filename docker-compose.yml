@@ -1,0 +1,62 @@
+version: "3.8"
+
+# ============================================================
+# Stack: cv-preflight
+# Deploy via Portainer (Git repository)
+# ============================================================
+
+services:
+
+  cv-extractor:
+    build:
+      context: ./cv-extractor
+      dockerfile: Dockerfile
+    image: cv-extractor:1.0.0
+    container_name: cv-extractor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TESSERACT_LANGS=ita+eng
+      - LOG_LEVEL=INFO
+      - MAX_UPLOAD_MB=20
+    volumes:
+      - cv-extractor-tmp:/tmp/cv-work
+      - cv-extractor-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - cv-net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    environment:
+      - MP_MAX_MESSAGES=500
+    volumes:
+      - mailpit-data:/data
+    networks:
+      - cv-net
+
+volumes:
+  cv-extractor-tmp:
+  cv-extractor-logs:
+  mailpit-data:
+
+networks:
+  cv-net:
+    driver: bridge
