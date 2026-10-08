@@ -25,3 +25,236 @@ Questo permette di:
 
 ## 🏗️ Architettura
 
+```
+[File CV] → [Preflight Check] → GREEN/YELLOW/RED
+                                       ↓
+                          GREEN/YELLOW → [LLM Extraction]
+                          RED          → [Human Review]
+```
+
+Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, nessuna variabilità, nessuna allucinazione possibile.
+
+---
+
+## 📦 Stack
+
+| Componente | Tecnologia |
+|---|---|
+| API | FastAPI + Uvicorn |
+| PDF nativo | pdfplumber + PyMuPDF |
+| PDF scansionato | OCRmyPDF + Tesseract |
+| DOCX | python-docx |
+| Immagini | Tesseract + Pillow |
+| Rilevamento lingua | langdetect |
+| Rilevamento MIME | python-magic |
+| Container | Docker |
+| Orchestrazione | Portainer |
+| CI/CD | GitHub Actions → GHCR |
+| Email di test | Mailpit |
+
+---
+
+## 🚀 Deploy
+
+### Prerequisiti
+
+- Docker + Docker Compose
+- Portainer (o Docker Compose CLI)
+- Accesso a GHCR (se l'immagine è privata)
+
+### Con Portainer
+
+1. **Stacks** → **Add stack**
+2. Nome: `cv-preflight`
+3. **Build method**: **Repository**
+4. **Repository URL**: `https://github.com/tuo-utente/cv-preflight`
+5. **Repository reference**: `refs/heads/main`
+6. **Compose path**: `docker-compose.yml`
+7. **Authentication**: ON (se repo privato) → username GitHub + PAT con scope `repo` e `read:packages`
+8. **Deploy the stack**
+
+### Con Docker Compose (CLI)
+
+```bash
+git clone https://github.com/tuo-utente/cv-preflight.git
+cd cv-preflight
+docker compose up -d
+```
+
+### Verifica
+
+```bash
+curl http://localhost:8080/health
+# → {"status":"ok","version":"1.0.0"}
+```
+
+---
+
+## 📡 API
+
+### `GET /`
+
+Info sul servizio.
+
+### `GET /health`
+
+Healthcheck.
+
+### `POST /extract`
+
+Upload di un CV, ritorna il risultato del pre-flight check.
+
+**Esempio:**
+
+```bash
+curl -X POST http://localhost:8080/extract \
+  -F "file=@/path/to/cv.pdf" | jq
+```
+
+**Output:**
+
+```json
+{
+  "file_id": "cv",
+  "mime_type": "application/pdf",
+  "extraction_method": "pdfplumber",
+  "readability_score": 95,
+  "risk_class": "GREEN",
+  "action": "proceed",
+  "metrics": {
+    "chars_per_page": 2495,
+    "ocr_confidence": 1.0,
+    "noise_ratio": 0.055,
+    "language_detected": "en",
+    "language_confidence": 0.99999,
+    "rotation_detected": 0.0,
+    "text_length": 7485
+  },
+  "raw_text": "...",
+  "raw_text_length": 7485,
+  "warnings": []
+}
+```
+
+---
+
+## 🎨 Classificazione rischio
+
+| Classe | Score | Azione | Significato |
+|---|---|---|---|
+| 🟢 GREEN | ≥ 80 | `proceed` | Documento leggibile, procedi |
+| 🟡 YELLOW | 50–79 | `proceed_with_flag` | Leggibile con riserve, procedi con flag |
+| 🔴 RED | < 50 | `human_review` | Illeggibile, richiede revisione umana |
+
+**Override RED automatico** se:
+- `ocr_confidence < 0.40`
+- `chars_per_page < 50`
+
+---
+
+## 📊 Metriche
+
+| Metrica | Peso | Descrizione |
+|---|---|---|
+| Densità testo | 30 | Caratteri per pagina |
+| Confidence OCR | 25 | Confidenza media Tesseract |
+| Rumore | 20 | % caratteri non alfanumerici |
+| Confidence lingua | 15 | Confidenza langdetect |
+| Rotazione | 10 | Gradi di rotazione rilevati |
+
+**Score finale**: 0–100.
+
+---
+
+## ✅ Validazione
+
+### Test 1 — CV nativo PDF (inglese)
+
+**Input**: `Davide_Naselli_Resume.pdf` (3 pagine, 127 KB, PDF nativo)
+
+**Risultato**:
+
+| Campo | Valore |
+|---|---|
+| `mime_type` | `application/pdf` |
+| `extraction_method` | `pdfplumber` |
+| `pages` | 3 |
+| `readability_score` | **95** |
+| `risk_class` | **GREEN** |
+| `action` | `proceed` |
+| `chars_per_page` | 2495 |
+| `ocr_confidence` | 1.0 (nessun OCR) |
+| `noise_ratio` | 0.055 |
+| `language_detected` | `en` (confidence 0.99999) |
+| `warnings` | `[]` |
+
+**Esito**: ✅ Il sistema ha correttamente:
+- Rilevato il MIME
+- Identificato il PDF come nativo (no OCR)
+- Estratto testo pulito e ordinato
+- Classificato il documento come GREEN (procedi senza intervento umano)
+- Rilevato la lingua inglese con altissima confidenza
+
+**Costo LLM**: **0€** (nessuna chiamata)
+
+---
+
+## ⚖️ Compliance
+
+### GDPR
+
+- **Nessun dato personale** viene inviato a servizi esterni in questa fase
+- I file sono processati in `/tmp` e cancellati dopo l'elaborazione
+- **Non committare CV reali** nel repository (vedi `.gitignore`)
+
+### AI Act (art. 6)
+
+- Il pre-flight check è **deterministico**, non è un sistema AI
+- I casi RED sono **automaticamente** indirizzati a **human review**
+- Ogni decisione è **tracciata** con metriche oggettive
+
+### CCNL
+
+- Nessun criterio discriminatorio è applicato in questa fase
+- L'estrazione è **neutra** rispetto a genere, età, etnia, religione
+
+---
+
+## 🧪 Sviluppo locale
+
+```bash
+cd cv-extractor
+pip install -r requirements.txt
+
+# Test CLI
+python preflight_check.py /path/to/cv.pdf
+
+# Test API
+uvicorn app:app --reload --port 8080
+```
+
+---
+
+## 📁 Struttura
+
+```
+cv-preflight/
+├── README.md
+├── docker-compose.yml
+├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── build-push.yml
+└── cv-extractor/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── app.py
+    └── preflight_check.py
+```
+
+---
+
+## 📝 Licenza
+
+Progetto privato. Tutti i diritti riservati.
+
