@@ -2,16 +2,16 @@ version: "3.8"
 
 # ============================================================
 # Stack: cv-preflight
-# Deploy via Portainer (Git repository)
+# Blocco 1: orchestrazione + preflight + email di test
 # ============================================================
 
 services:
 
+  # ----------------------------------------------------------
+  # Microservizio FastAPI: preflight + estrazione testo
+  # ----------------------------------------------------------
   cv-extractor:
-    build:
-      context: ./cv-extractor
-      dockerfile: Dockerfile
-    image: cv-extractor:1.0.0
+    image: ghcr.io/tuo-utente/cv-preflight/cv-extractor:latest
     container_name: cv-extractor
     restart: unless-stopped
     ports:
@@ -38,15 +38,53 @@ services:
           cpus: "1.5"
           memory: 1G
 
+  # ----------------------------------------------------------
+  # n8n: orchestratore
+  # ----------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Base
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Rome
+      - TZ=Europe/Rome
+      # Sicurezza (solo per sviluppo locale)
+      - N8N_SECURE_COOKIE=false
+      # Abilita Execute Command (n8n 2.0)
+      - NODES_EXCLUDE=[]
+      # Log
+      - N8N_LOG_LEVEL=info
+      # Database (SQLite di default, ok per MVP)
+      - DB_TYPE=sqlite
+      # Disabilita telemetria
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - cv-net
+
+  # ----------------------------------------------------------
+  # Mailpit: email di test (SMTP + UI web)
+  # ----------------------------------------------------------
   mailpit:
     image: axllent/mailpit:latest
     container_name: mailpit
     restart: unless-stopped
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "8025:8025"   # UI web
+      - "1025:1025"   # SMTP
     environment:
       - MP_MAX_MESSAGES=500
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
     volumes:
       - mailpit-data:/data
     networks:
@@ -55,6 +93,7 @@ services:
 volumes:
   cv-extractor-tmp:
   cv-extractor-logs:
+  n8n-data:
   mailpit-data:
 
 networks:
