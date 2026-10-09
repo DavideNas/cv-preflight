@@ -59,10 +59,10 @@ services:
       - DB_TYPE=sqlite
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_VERSION_NOTIFICATIONS_ENABLED=false
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false           # ← unlock access restriction
-      - N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES=false     # ← unlock access restriction
-      - N8N_RESTRICT_FILE_ACCESS_TO=/data            # ← unlock access restriction
-      - NODE_FUNCTION_ALLOW_EXTERNAL=axios           # ← used to call api on different container
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false            # ← unlock access restriction
+      - N8N_BLOCK_FILE_ACCESS_TO_N8N_FILES=false      # ← unlock access restriction
+      - N8N_RESTRICT_FILE_ACCESS_TO=/data             # ← unlock access restriction
+      - NODE_FUNCTION_ALLOW_EXTERNAL=axios,form-data  # ← used to call api on different container
     volumes:
       - cv-preflight-n8n-data:/home/node/.n8n
       - /opt/cv-test-data:/data/local-test-cvs:ro  # ← CV di test accessibili
