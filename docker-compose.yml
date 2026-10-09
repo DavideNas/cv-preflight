@@ -2,15 +2,8 @@ version: "3.8"
 
 # ============================================================
 # Stack: cv-preflight
-# Blocco 1: orchestrazione + preflight + email di test
-# Versione: 1.1.0 (agency detection)
-#
-# NOTE:
-#   - Il servizio n8n è COMMENTATO perché potrebbe già essere
-#     presente in un altro stack (es. per il sito aziendale).
-#   - DECOMMENTA SE n8n non è già presente.
-#   - cv-extractor è connesso a n8n_n8n-net per comunicare
-#     con il n8n esistente.
+# Blocco 1+2: preflight check + estrazione LLM
+# Stack autoportante per test (n8n isolato)
 # ============================================================
 
 services:
@@ -20,7 +13,7 @@ services:
   # ----------------------------------------------------------
   cv-extractor:
     image: ghcr.io/davidenas/cv-preflight/cv-extractor:latest
-    container_name: cv-extractor
+    container_name: cv-preflight-extractor
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -39,8 +32,7 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - cv-net
-      - n8n-external-net
+      - cv-preflight-net
     deploy:
       resources:
         limits:
@@ -48,15 +40,43 @@ services:
           memory: 1G
 
   # ----------------------------------------------------------
+  # n8n: orchestratore (ISOLATO per cv-preflight)
+  # ----------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cv-preflight-n8n
+    restart: unless-stopped
+    ports:
+      - "5679:5678"   # ← porta host 5679 (il n8n del sito usa 5678)
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5679/
+      - GENERIC_TIMEZONE=Europe/Rome
+      - TZ=Europe/Rome
+      - N8N_SECURE_COOKIE=false
+      - NODES_EXCLUDE=[]
+      - N8N_LOG_LEVEL=info
+      - DB_TYPE=sqlite
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    volumes:
+      - cv-preflight-n8n-data:/home/node/.n8n
+      - ./local-test-cvs:/data/local-test-cvs:ro    # ← CV di test accessibili
+    networks:
+      - cv-preflight-net
+
+  # ----------------------------------------------------------
   # Mailpit: email di test (SMTP + UI web)
   # ----------------------------------------------------------
   mailpit:
     image: axllent/mailpit:latest
-    container_name: mailpit
+    container_name: cv-preflight-mailpit
     restart: unless-stopped
     ports:
       - "8025:8025"   # UI web
-      - "1025:1025"   # SMTP
+      - "1026:1025"   # ← SMTP host 1026 (il mailpit del sito usa 1025)
     environment:
       - MP_MAX_MESSAGES=500
       - MP_SMTP_AUTH_ACCEPT_ANY=1
@@ -64,49 +84,14 @@ services:
     volumes:
       - mailpit-data:/data
     networks:
-      - cv-net
-
-  # ----------------------------------------------------------
-  # n8n: orchestratore
-  # ----------------------------------------------------------
-  # DECOMMENTA SE n8n non è già presente in un altro stack.
-  # ----------------------------------------------------------
-  # n8n:
-  #   image: n8nio/n8n:latest
-  #   container_name: n8n
-  #   restart: unless-stopped
-  #   ports:
-  #     - "5678:5678"
-  #   environment:
-  #     - N8N_HOST=0.0.0.0
-  #     - N8N_PORT=5678
-  #     - N8N_PROTOCOL=http
-  #     - WEBHOOK_URL=http://localhost:5678/
-  #     - GENERIC_TIMEZONE=Europe/Rome
-  #     - TZ=Europe/Rome
-  #     - N8N_SECURE_COOKIE=false
-  #     - NODES_EXCLUDE=[]
-  #     - N8N_LOG_LEVEL=info
-  #     - DB_TYPE=sqlite
-  #     - N8N_DIAGNOSTICS_ENABLED=false
-  #     - N8N_VERSION_NOTIFICATIONS_ENABLED=false
-  #   volumes:
-  #     - n8n-data:/home/node/.n8n
-  #   networks:
-  #     - cv-net
+      - cv-preflight-net
 
 volumes:
   cv-extractor-tmp:
   cv-extractor-logs:
+  cv-preflight-n8n-data:
   mailpit-data:
-  # n8n-data:    # DECOMMENTA SE decommenti il servizio n8n sopra
 
 networks:
-  # Rete interna dello stack cv-preflight
-  cv-net:
+  cv-preflight-net:
     driver: bridge
-
-  # Rete esterna del n8n esistente (per comunicazione cross-stack)
-  n8n-external-net:
-    external: true
-    name: n8n_n8n-net
