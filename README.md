@@ -60,6 +60,8 @@ Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, n
 | Agency detection | pyyaml + regex |
 | Container | Docker |
 | Orchestrazione | Portainer |
+| Orchestratore workflow | n8n (dedicato, isolato) |
+| LLM | Anthropic Claude Sonnet |
 | CI/CD | GitHub Actions → GHCR |
 | Email di test | Mailpit |
 
@@ -72,6 +74,7 @@ Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, n
 - Docker + Docker Compose
 - Portainer (o Docker Compose CLI)
 - Accesso a GHCR (il package è pubblico, quindi pull anonimo)
+- **CV di test copiati in `/opt/cv-test-data/`** (vedi sezione "Test Data Volume")
 
 ### Con Portainer
 
@@ -95,9 +98,51 @@ docker compose up -d
 ### Verifica
 
 ```bash
+# Preflight service
 curl http://localhost:8080/health
 # → {"status":"ok","version":"1.1.1"}
+
+# n8n (dedicato al test)
+# Browser: http://localhost:5679
+
+# Mailpit UI
+# Browser: http://localhost:8025
 ```
+
+### Porte utilizzate
+
+| Servizio | Porta host | Note |
+|---|---|---|
+| `cv-preflight-extractor` | 8080 | API FastAPI |
+| `cv-preflight-n8n` | 5679 | UI n8n (il n8n del sito usa 5678) |
+| `cv-preflight-mailpit` UI | 8025 | UI web |
+| `cv-preflight-mailpit` SMTP | 1026 | SMTP (il mailpit del sito usa 1025) |
+
+---
+
+## 🗂️ Test Data Volume
+
+Lo stack monta `/opt/cv-test-data` (read-only) dentro il container n8n, al path `/data/local-test-cvs`. Questo permette a n8n di leggere i CV di test **senza includerli nel repository** (compliance GDPR).
+
+### Popolare il volume
+
+```bash
+# Crea la cartella
+sudo mkdir -p /opt/cv-test-data
+
+# Copia i CV
+sudo cp ~/Scrivania/TestOneblade/cv-preflight/local-test-cvs/* /opt/cv-test-data/
+
+# Permessi
+sudo chmod 755 /opt/cv-test-data
+sudo chmod 644 /opt/cv-test-data/*
+```
+
+### Perché path assoluto?
+
+Portainer clona il repository nella propria directory di lavoro (`/data/compose/<stack-id>/`). I path **relativi** nel compose (come `./local-test-cvs`) risolvono a directory vuote dentro l'albero di Portainer, **non** al filesystem locale dell'utente.
+
+Usando `/opt/cv-test-data` (assoluto), il bind-mount punta a una directory reale del host.
 
 ---
 
@@ -365,6 +410,7 @@ Per aggiungere un'agenzia, basta modificare il YAML e riavviare il container.
 - **Nessun dato personale** viene inviato a servizi esterni in questa fase
 - I file sono processati in `/tmp` e cancellati dopo l'elaborazione
 - **Non committare CV reali** nel repository (vedi `.gitignore`)
+- I CV di test sono montati da `/opt/cv-test-data` (read-only) e **non versionati**
 - Il sistema **riconosce** i CV anonimizzati da agenzie e non forza la ricerca dei dati rimossi
 
 ### AI Act (art. 6)
@@ -422,6 +468,7 @@ cv-preflight/
 - 🐛 Fix OCRmyPDF: rimosso `--image-dpi` (ignorato sui PDF, generava warning)
 - ✨ Aggiunto fallback PyMuPDF + Tesseract se OCRmyPDF produce sidecar vuoto
 - 🔧 Refactoring: `run_ocr_pdf()` ora orchestra `_try_ocrmypdf()` + `_try_pymupdf_tesseract()`
+- 🐛 Fix: path assoluto `/opt/cv-test-data` per il volume dei CV di test (Portainer clona il repo in una directory temporanea)
 
 ### v1.1.0
 - ✨ Aggiunto rilevamento agency protection (header agenzia HR)
