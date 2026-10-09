@@ -1,6 +1,6 @@
 """
 Pre-flight check di leggibilità per CV.
-Deterministico, zero LLM. Output: JSON con score e risk class.
+Deterministico, zero LLM. Output: JSON con score, risk class e agency protection.
 
 Dipendenze di sistema:
     - Tesseract OCR (con lingua ita + eng)
@@ -8,7 +8,12 @@ Dipendenze di sistema:
     - libmagic (per python-magic)
 
 Dipendenze Python:
-    pip install pdfplumber pymupdf pytesseract pillow langdetect python-magic python-docx
+    pip install pdfplumber pymupdf pytesseract pillow langdetect python-magic python-docx pyyaml
+
+Versione: 1.1.0
+Changelog:
+    - 1.1.0: Aggiunto rilevamento agency protection (header agenzia HR)
+    - 1.0.0: Prima versione (preflight check base)
 """
 
 import json
@@ -23,8 +28,17 @@ import fitz  # PyMuPDF
 import magic
 import pdfplumber
 import pytesseract
+import yaml
 from langdetect import detect_langs, LangDetectException
 from PIL import Image
+
+
+# ============================================================
+# COSTANTI
+# ============================================================
+
+VERSION = "1.1.0"
+AGENCY_PATTERNS_PATH = Path(__file__).parent / "agency_patterns.yaml"
 
 
 # ============================================================
@@ -68,9 +82,206 @@ class PreflightResult:
     readability_score: int
     risk_class: str            # GREEN | YELLOW | RED
     metrics: dict
+    agency_protection: dict
     raw_text: str
     warnings: list = field(default_factory=list)
     action: str = "proceed"    # proceed | proceed_with_flag | human_review
+
+
+# ============================================================
+# AGENCY PATTERNS — CARICAMENTO
+# ============================================================
+
+_AGENCY_CONFIG_CACHE: Optional[dict] = None
+
+
+def load_agency_patterns() -> dict:
+    """
+    Carica i pattern di agenzie HR da YAML.
+    Cache in memoria per evitare I/O ripetuto.
+    """
+    global _AGENCY_CONFIG_CACHE
+    if _AGENCY_CONFIG_CACHE is not None:
+        return _AGENCY_CONFIG_CACHE
+
+    if not AGENCY_PATTERNS_PATH.exists():
+        # Fallback: config vuota se il file non esiste
+        _AGENCY_CONFIG_CACHE = {
+            "agencies": [],
+            "generic_header_patterns": [],
+            "search_zones": {"header_lines": 20, "footer_lines": 10},
+            "sensitive_data_patterns": {},
+        }
+        return _AGENCY_CONFIG_CACHE
+
+    with open(AGENCY_PATTERNS_PATH, "r", encoding="utf-8") as f:
+        _AGENCY_CONFIG_CACHE = yaml.safe_load(f)
+
+    return _AGENCY_CONFIG_CACHE
+
+
+# ============================================================
+# AGENCY PROTECTION — DETECTION
+# ============================================================
+
+def detect_agency_protection(raw_text: str) -> dict:
+    """
+    Rileva se il CV è passato da un'agenzia HR intermediaria.
+    Deterministico, zero LLM.
+
+    Cerca marker testuali nelle zone header/footer del testo.
+    Ritorna un dict con:
+      - detected: bool
+      - confidence: high | medium | low
+      - agency_name: str | None
+      - agency_header_line: str | None
+      - match_type: known_agency | generic_pattern | none
+      - sensitive_data_present: bool | None
+      - expected_missing_fields: list
+    """
+    if not raw_text or len(raw_text.strip()) < 30:
+        return _empty_agency_protection()
+
+    config = load_agency_patterns()
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+
+    if not lines:
+        return _empty_agency_protection()
+
+    header_n = config.get("search_zones", {}).get("header_lines", 20)
+    footer_n = config.get("search_zones", {}).get("footer_lines", 10)
+
+    header_zone_lines = lines[:header_n]
+    footer_zone_lines = lines[-footer_n:] if len(lines) > footer_n else []
+
+    header_zone = "\n".join(header_zone_lines).lower()
+    footer_zone = "\n".join(footer_zone_lines).lower()
+    search_text = header_zone + "\n" + footer_zone
+
+    # --------------------------------------------------------
+    # 1. Match con agenzie note
+    # --------------------------------------------------------
+    for agency in config.get("agencies", []):
+        for pattern in agency.get("patterns", []):
+            if pattern.lower() in search_text:
+                header_line = _find_line_in_zones(
+                    header_zone_lines, footer_zone_lines, pattern
+                )
+                return {
+                    "detected": True,
+                    "confidence": "high",
+                    "agency_name": agency.get("name"),
+                    "agency_header_line": header_line,
+                    "match_type": "known_agency",
+                    "sensitive_data_present": _check_sensitive_data(raw_text, config),
+                    "expected_missing_fields": _expected_missing_if_protected(),
+                }
+
+    # --------------------------------------------------------
+    # 2. Match con pattern generici
+    # --------------------------------------------------------
+    for pattern in config.get("generic_header_patterns", []):
+        if pattern.lower() in search_text:
+            header_line = _find_line_in_zones(
+                header_zone_lines, footer_zone_lines, pattern
+            )
+            return {
+                "detected": True,
+                "confidence": "medium",
+                "agency_name": None,
+                "agency_header_line": header_line,
+                "match_type": "generic_pattern",
+                "sensitive_data_present": _check_sensitive_data(raw_text, config),
+                "expected_missing_fields": _expected_missing_if_protected(),
+            }
+
+    # --------------------------------------------------------
+    # 3. Nessun match
+    # --------------------------------------------------------
+    return _empty_agency_protection()
+
+
+def _empty_agency_protection() -> dict:
+    return {
+        "detected": False,
+        "confidence": "low",
+        "agency_name": None,
+        "agency_header_line": None,
+        "match_type": "none",
+        "sensitive_data_present": None,
+        "expected_missing_fields": [],
+    }
+
+
+def _find_line_in_zones(
+    header_lines: list[str],
+    footer_lines: list[str],
+    pattern: str,
+) -> Optional[str]:
+    """Trova la riga esatta che contiene il pattern, in header o footer."""
+    for line in header_lines:
+        if pattern.lower() in line.lower():
+            return line
+    for line in footer_lines:
+        if pattern.lower() in line.lower():
+            return line
+    return None
+
+
+def _check_sensitive_data(raw_text: str, config: dict) -> bool:
+    """
+    Verifica se ci sono dati sensibili nel testo.
+    Ritorna True se almeno un pattern sensibile è presente.
+    """
+    patterns = config.get("sensitive_data_patterns", {})
+    if not patterns:
+        return False
+
+    # Email
+    if "email" in patterns and re.search(patterns["email"], raw_text):
+        return True
+
+    # Telefono IT
+    if "phone_it" in patterns and re.search(patterns["phone_it"], raw_text):
+        return True
+
+    # Telefono internazionale
+    if "phone_intl" in patterns and re.search(patterns["phone_intl"], raw_text):
+        return True
+
+    # Codice fiscale
+    if "codice_fiscale" in patterns and re.search(patterns["codice_fiscale"], raw_text):
+        return True
+
+    # Partita IVA
+    if "partita_iva" in patterns and re.search(patterns["partita_iva"], raw_text):
+        return True
+
+    # Keyword data di nascita
+    for kw in patterns.get("date_of_birth_keywords", []):
+        if kw.lower() in raw_text.lower():
+            return True
+
+    # Keyword indirizzo
+    for kw in patterns.get("address_keywords", []):
+        if kw.lower() in raw_text.lower():
+            return True
+
+    return False
+
+
+def _expected_missing_if_protected() -> list:
+    """
+    Campi che ci si aspetta manchino se il CV è protetto da agenzia.
+    Usati per escludere questi campi dal retry.
+    """
+    return [
+        "candidate.email",
+        "candidate.phone",
+        "candidate.location",
+        "candidate.date_of_birth",
+        "candidate.nationality",
+    ]
 
 
 # ============================================================
@@ -333,6 +544,7 @@ def preflight_check(file_path: str, file_id: str = "unknown",
     pages = 1
     extraction_method = "none"
     metrics: dict = {}
+    agency_protection: dict = _empty_agency_protection()
 
     # --------------------------------------------------------
     # PDF
@@ -399,6 +611,7 @@ def preflight_check(file_path: str, file_id: str = "unknown",
             readability_score=0,
             risk_class="RED",
             metrics={},
+            agency_protection=_empty_agency_protection(),
             raw_text="",
             warnings=warnings,
             action="human_review",
@@ -423,6 +636,11 @@ def preflight_check(file_path: str, file_id: str = "unknown",
         warnings.append("low_ocr_confidence")
 
     # --------------------------------------------------------
+    # Agency protection detection
+    # --------------------------------------------------------
+    agency_protection = detect_agency_protection(raw_text)
+
+    # --------------------------------------------------------
     # Score + classificazione
     # --------------------------------------------------------
     score = compute_readability_score(metrics, thresholds)
@@ -438,6 +656,7 @@ def preflight_check(file_path: str, file_id: str = "unknown",
         readability_score=score,
         risk_class=risk_class,
         metrics=metrics,
+        agency_protection=agency_protection,
         raw_text=raw_text,
         warnings=warnings,
         action=action,

@@ -1,0 +1,105 @@
+# ============================================================
+# Pattern per il rilevamento di agenzie HR intermediarie
+# Usato dal preflight check (deterministico, zero LLM)
+# ============================================================
+
+agencies:
+  - name: "Randstad"
+    patterns:
+      - "randstad"
+      - "randstad italia"
+      - "randstad hr"
+
+  - name: "Adecco"
+    patterns:
+      - "adecco"
+      - "adecco italia"
+      - "adecco group"
+
+  - name: "Manpower"
+    patterns:
+      - "manpower"
+      - "manpowergroup"
+      - "manpower italia"
+
+  - name: "Gi Group"
+    patterns:
+      - "gi group"
+      - "gigroup"
+      - "gi group italia"
+
+  - name: "Michael Page"
+    patterns:
+      - "michael page"
+      - "michael page italia"
+
+  - name: "Hays"
+    patterns:
+      - "hays"
+      - "hays italia"
+
+  - name: "Robert Half"
+    patterns:
+      - "robert half"
+      - "robert half italia"
+
+  - name: "Page Personnel"
+    patterns:
+      - "page personnel"
+      - "page personnel italia"
+
+  - name: "Kelly Services"
+    patterns:
+      - "kelly services"
+      - "kelly services italia"
+
+  - name: "Synergie"
+    patterns:
+      - "synergie"
+      - "synergie italia"
+
+# ============================================================
+# Pattern generici di header agenzia
+# Usati quando non c'è match con agenzie note
+# ============================================================
+generic_header_patterns:
+  - "agenzia per il lavoro"
+  - "agenzia per il lavoro autorizzata"
+  - "somministrazione di lavoro"
+  - "ricerca e selezione del personale"
+  - "consulenza hr"
+  - "hr consulting"
+  - "talent acquisition"
+  - "recruitment agency"
+  - "head hunting"
+  - "executive search"
+
+# ============================================================
+# Zone di ricerca (righe dall'inizio/fine del testo)
+# ============================================================
+search_zones:
+  header_lines: 20      # prime 20 righe
+  footer_lines: 10      # ultime 10 righe
+
+# ============================================================
+# Pattern per il rilevamento di dati sensibili
+# ============================================================
+sensitive_data_patterns:
+  email: '[\w\.-]+@[\w\.-]+\.\w+'
+  phone_it: '\+39[\s\.]?\d{2,3}[\s\.]?\d{6,7}'
+  phone_intl: '\+\d{1,3}[\s\.]?\d{6,14}'
+  date_of_birth_keywords:
+    - "data di nascita"
+    - "nato il"
+    - "nata il"
+    - "born"
+    - "date of birth"
+  address_keywords:
+    - "via "
+    - "viale "
+    - "piazza "
+    - "corso "
+    - "street "
+    - "avenue "
+  codice_fiscale: '[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]'
+  partita_iva: 'IT\d{11}|\d{11}'

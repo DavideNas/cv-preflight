@@ -3,6 +3,7 @@ version: "3.8"
 # ============================================================
 # Stack: cv-preflight
 # Blocco 1: orchestrazione + preflight + email di test
+# Versione: 1.1.0 (agency detection)
 # ============================================================
 
 services:
@@ -11,7 +12,7 @@ services:
   # Microservizio FastAPI: preflight + estrazione testo
   # ----------------------------------------------------------
   cv-extractor:
-    image: ghcr.io/davidenas/cv-preflight/cv-extractor:sha-116a1f1
+    image: ghcr.io/davidenas/cv-preflight/cv-extractor:latest
     container_name: cv-extractor
     restart: unless-stopped
     ports:
@@ -48,22 +49,16 @@ services:
     ports:
       - "5678:5678"
     environment:
-      # Base
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:5678/
       - GENERIC_TIMEZONE=Europe/Rome
       - TZ=Europe/Rome
-      # Sicurezza (solo per sviluppo locale)
       - N8N_SECURE_COOKIE=false
-      # Abilita Execute Command (n8n 2.0)
       - NODES_EXCLUDE=[]
-      # Log
       - N8N_LOG_LEVEL=info
-      # Database (SQLite di default, ok per MVP)
       - DB_TYPE=sqlite
-      # Disabilita telemetria
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_VERSION_NOTIFICATIONS_ENABLED=false
     volumes:

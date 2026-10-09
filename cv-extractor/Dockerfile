@@ -1,6 +1,7 @@
 # ============================================================
 # CV Extractor - FastAPI + OCRmyPDF + Tesseract
 # Pre-flight check + estrazione testo CV (deterministico, no LLM)
+# + Agency protection detection (v1.1.0)
 #
 # Base: Debian slim (compatibilità Tesseract + OCRmyPDF)
 # ============================================================
@@ -10,9 +11,9 @@ FROM python:3.11-slim
 # Metadata
 # ------------------------------------------------------------
 LABEL org.opencontainers.image.title="cv-extractor"
-LABEL org.opencontainers.image.description="Pre-flight check + estrazione testo CV"
-LABEL org.opencontainers.image.version="1.0.0"
-LABEL org.opencontainers.image.authors="tuo-utente"
+LABEL org.opencontainers.image.description="Pre-flight check + estrazione testo CV + agency detection"
+LABEL org.opencontainers.image.version="1.1.0"
+LABEL org.opencontainers.image.authors="DavideNas"
 
 # ------------------------------------------------------------
 # Environment
@@ -52,6 +53,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ------------------------------------------------------------
 COPY app.py .
 COPY preflight_check.py .
+COPY agency_patterns.yaml .
 
 # ------------------------------------------------------------
 # Utente non-root
