@@ -83,4 +83,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64      # ← solo amd64
+          provenance: false           # ← rimuovi attestazione
+          sbom: false                 # ← rimuovi SBOM

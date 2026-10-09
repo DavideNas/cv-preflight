@@ -1,5 +1,3 @@
-version: "3.8"
-
 # ============================================================
 # Stack: cv-preflight
 # Blocco 1+2: preflight check + estrazione LLM
