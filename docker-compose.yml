@@ -4,6 +4,13 @@ version: "3.8"
 # Stack: cv-preflight
 # Blocco 1: orchestrazione + preflight + email di test
 # Versione: 1.1.0 (agency detection)
+#
+# NOTE:
+#   - Il servizio n8n è COMMENTATO perché potrebbe già essere
+#     presente in un altro stack (es. per il sito aziendale).
+#   - DECOMMENTA SE n8n non è già presente.
+#   - cv-extractor è connesso a n8n_n8n-net per comunicare
+#     con il n8n esistente.
 # ============================================================
 
 services:
@@ -33,38 +40,12 @@ services:
       start_period: 20s
     networks:
       - cv-net
+      - n8n-external-net
     deploy:
       resources:
         limits:
           cpus: "1.5"
           memory: 1G
-
-  # ----------------------------------------------------------
-  # n8n: orchestratore
-  # ----------------------------------------------------------
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: n8n
-    restart: unless-stopped
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_HOST=0.0.0.0
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=Europe/Rome
-      - TZ=Europe/Rome
-      - N8N_SECURE_COOKIE=false
-      - NODES_EXCLUDE=[]
-      - N8N_LOG_LEVEL=info
-      - DB_TYPE=sqlite
-      - N8N_DIAGNOSTICS_ENABLED=false
-      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
-    volumes:
-      - n8n-data:/home/node/.n8n
-    networks:
-      - cv-net
 
   # ----------------------------------------------------------
   # Mailpit: email di test (SMTP + UI web)
@@ -85,12 +66,47 @@ services:
     networks:
       - cv-net
 
+  # ----------------------------------------------------------
+  # n8n: orchestratore
+  # ----------------------------------------------------------
+  # DECOMMENTA SE n8n non è già presente in un altro stack.
+  # ----------------------------------------------------------
+  # n8n:
+  #   image: n8nio/n8n:latest
+  #   container_name: n8n
+  #   restart: unless-stopped
+  #   ports:
+  #     - "5678:5678"
+  #   environment:
+  #     - N8N_HOST=0.0.0.0
+  #     - N8N_PORT=5678
+  #     - N8N_PROTOCOL=http
+  #     - WEBHOOK_URL=http://localhost:5678/
+  #     - GENERIC_TIMEZONE=Europe/Rome
+  #     - TZ=Europe/Rome
+  #     - N8N_SECURE_COOKIE=false
+  #     - NODES_EXCLUDE=[]
+  #     - N8N_LOG_LEVEL=info
+  #     - DB_TYPE=sqlite
+  #     - N8N_DIAGNOSTICS_ENABLED=false
+  #     - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+  #   volumes:
+  #     - n8n-data:/home/node/.n8n
+  #   networks:
+  #     - cv-net
+
 volumes:
   cv-extractor-tmp:
   cv-extractor-logs:
-  n8n-data:
   mailpit-data:
+  # n8n-data:    # DECOMMENTA SE decommenti il servizio n8n sopra
 
 networks:
+  # Rete interna dello stack cv-preflight
   cv-net:
     driver: bridge
+
+  # Rete esterna del n8n esistente (per comunicazione cross-stack)
+  n8n-external-net:
+    external: true
+    name: n8n_n8n-net
