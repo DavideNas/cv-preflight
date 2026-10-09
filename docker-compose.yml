@@ -61,7 +61,7 @@ services:
       - N8N_VERSION_NOTIFICATIONS_ENABLED=false
     volumes:
       - cv-preflight-n8n-data:/home/node/.n8n
-      - ./local-test-cvs:/data/local-test-cvs:ro    # ← CV di test accessibili
+      - /opt/cv-test-data:/data/local-test-cvs:ro  # ← CV di test accessibili
     networks:
       - cv-preflight-net
 
