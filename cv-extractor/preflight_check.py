@@ -10,8 +10,9 @@ Dipendenze di sistema:
 Dipendenze Python:
     pip install pdfplumber pymupdf pytesseract pillow langdetect python-magic python-docx pyyaml
 
-Versione: 1.1.0
+Versione: 1.1.1
 Changelog:
+    - 1.1.1: Fix OCRmyPDF (rimosso --output-type none) + fallback Tesseract
     - 1.1.0: Aggiunto rilevamento agency protection (header agenzia HR)
     - 1.0.0: Prima versione (preflight check base)
 """
@@ -37,7 +38,7 @@ from PIL import Image
 # COSTANTI
 # ============================================================
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 AGENCY_PATTERNS_PATH = Path(__file__).parent / "agency_patterns.yaml"
 
 
@@ -105,7 +106,6 @@ def load_agency_patterns() -> dict:
         return _AGENCY_CONFIG_CACHE
 
     if not AGENCY_PATTERNS_PATH.exists():
-        # Fallback: config vuota se il file non esiste
         _AGENCY_CONFIG_CACHE = {
             "agencies": [],
             "generic_header_patterns": [],
@@ -128,16 +128,6 @@ def detect_agency_protection(raw_text: str) -> dict:
     """
     Rileva se il CV è passato da un'agenzia HR intermediaria.
     Deterministico, zero LLM.
-
-    Cerca marker testuali nelle zone header/footer del testo.
-    Ritorna un dict con:
-      - detected: bool
-      - confidence: high | medium | low
-      - agency_name: str | None
-      - agency_header_line: str | None
-      - match_type: known_agency | generic_pattern | none
-      - sensitive_data_present: bool | None
-      - expected_missing_fields: list
     """
     if not raw_text or len(raw_text.strip()) < 30:
         return _empty_agency_protection()
@@ -229,40 +219,26 @@ def _find_line_in_zones(
 
 
 def _check_sensitive_data(raw_text: str, config: dict) -> bool:
-    """
-    Verifica se ci sono dati sensibili nel testo.
-    Ritorna True se almeno un pattern sensibile è presente.
-    """
+    """Verifica se ci sono dati sensibili nel testo."""
     patterns = config.get("sensitive_data_patterns", {})
     if not patterns:
         return False
 
-    # Email
     if "email" in patterns and re.search(patterns["email"], raw_text):
         return True
-
-    # Telefono IT
     if "phone_it" in patterns and re.search(patterns["phone_it"], raw_text):
         return True
-
-    # Telefono internazionale
     if "phone_intl" in patterns and re.search(patterns["phone_intl"], raw_text):
         return True
-
-    # Codice fiscale
     if "codice_fiscale" in patterns and re.search(patterns["codice_fiscale"], raw_text):
         return True
-
-    # Partita IVA
     if "partita_iva" in patterns and re.search(patterns["partita_iva"], raw_text):
         return True
 
-    # Keyword data di nascita
     for kw in patterns.get("date_of_birth_keywords", []):
         if kw.lower() in raw_text.lower():
             return True
 
-    # Keyword indirizzo
     for kw in patterns.get("address_keywords", []):
         if kw.lower() in raw_text.lower():
             return True
@@ -271,10 +247,7 @@ def _check_sensitive_data(raw_text: str, config: dict) -> bool:
 
 
 def _expected_missing_if_protected() -> list:
-    """
-    Campi che ci si aspetta manchino se il CV è protetto da agenzia.
-    Usati per escludere questi campi dal retry.
-    """
+    """Campi che ci si aspetta manchino se il CV è protetto da agenzia."""
     return [
         "candidate.email",
         "candidate.phone",
@@ -335,19 +308,38 @@ def is_pdf_scanned(native_text: str, pages: int, thresholds: Thresholds) -> bool
     return (len(native_text) / pages) < thresholds.min_chars_per_page_native
 
 
+# ============================================================
+# OCR PDF — CON FALLBACK
+# ============================================================
+
 def run_ocr_pdf(file_path: str, thresholds: Thresholds) -> tuple[str, float]:
-    """OCR su PDF via ocrmypdf --sidecar. Ritorna (testo, confidence stimata)."""
+    """
+    OCR su PDF. Prova OCRmyPDF, fallback a PyMuPDF + Tesseract.
+    Ritorna (testo, confidence stimata).
+    """
+    # Tentativo 1: OCRmyPDF
+    text, confidence = _try_ocrmypdf(file_path)
+    if text.strip():
+        return text, confidence
+
+    # Tentativo 2: fallback PyMuPDF + Tesseract
+    return _try_pymupdf_tesseract(file_path)
+
+
+def _try_ocrmypdf(file_path: str) -> tuple[str, float]:
+    """
+    OCR via OCRmyPDF con sidecar testuale.
+    Ritorna (testo, confidence). Testo vuoto se fallisce.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         sidecar = Path(tmpdir) / "out.txt"
         dummy_pdf = Path(tmpdir) / "dummy.pdf"
 
         cmd = [
             "ocrmypdf",
-            "--image-dpi", "300",
             "--deskew",
             "--rotate-pages",
             "--sidecar", str(sidecar),
-            "--output-type", "none",
             "-l", "ita+eng",
             file_path,
             str(dummy_pdf),
@@ -365,6 +357,39 @@ def run_ocr_pdf(file_path: str, thresholds: Thresholds) -> tuple[str, float]:
         text = sidecar.read_text(encoding="utf-8", errors="ignore") if sidecar.exists() else ""
         confidence = estimate_ocr_confidence_pdf(file_path)
         return text, confidence
+
+
+def _try_pymupdf_tesseract(file_path: str) -> tuple[str, float]:
+    """
+    Fallback: renderizza ogni pagina del PDF con PyMuPDF,
+    applica Tesseract direttamente. Ritorna (testo, confidence).
+    """
+    text_parts = []
+    confidences = []
+    doc = fitz.open(file_path)
+    for page in doc:
+        try:
+            pix = page.get_pixmap(dpi=300)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+            data = pytesseract.image_to_data(
+                img, lang="ita+eng", output_type=pytesseract.Output.DICT
+            )
+            text_parts.append(pytesseract.image_to_string(img, lang="ita+eng"))
+
+            vals = [
+                int(c) for c in data["conf"]
+                if str(c).lstrip("-").isdigit() and int(c) >= 0
+            ]
+            if vals:
+                confidences.append(sum(vals) / len(vals) / 100.0)
+        except Exception:
+            continue
+    doc.close()
+
+    text = "\n".join(text_parts)
+    confidence = sum(confidences) / len(confidences) if confidences else 0.0
+    return text, confidence
 
 
 def estimate_ocr_confidence_pdf(file_path: str) -> float:
@@ -430,7 +455,6 @@ def compute_readability_score(metrics: dict, thresholds: Thresholds) -> int:
     """
     score = 0.0
 
-    # Densità testo (30 pt)
     chars_per_page = metrics.get("chars_per_page", 0)
     if chars_per_page >= 1500:
         score += 30
@@ -440,17 +464,13 @@ def compute_readability_score(metrics: dict, thresholds: Thresholds) -> int:
         score += 15
     elif chars_per_page >= 100:
         score += 8
-    else:
-        score += 0
 
-    # Confidence OCR (25 pt) — se non applicabile, assegna pieno
     if metrics.get("extraction_method") in ("ocrmypdf", "tesseract"):
         ocr_conf = metrics.get("ocr_confidence", 0.0)
         score += max(0.0, min(1.0, ocr_conf)) * 25
     else:
         score += 25
 
-    # Rumore (20 pt)
     noise = metrics.get("noise_ratio", 1.0)
     if noise <= 0.05:
         score += 20
@@ -460,10 +480,7 @@ def compute_readability_score(metrics: dict, thresholds: Thresholds) -> int:
         score += 10
     elif noise <= 0.30:
         score += 5
-    else:
-        score += 0
 
-    # Lingua (15 pt)
     lang_conf = metrics.get("language_confidence", 0.0)
     if lang_conf >= 0.95:
         score += 15
@@ -471,10 +488,7 @@ def compute_readability_score(metrics: dict, thresholds: Thresholds) -> int:
         score += 10
     elif lang_conf >= 0.60:
         score += 5
-    else:
-        score += 0
 
-    # Rotazione (10 pt)
     rot = abs(metrics.get("rotation_detected", 0.0))
     if rot <= 2:
         score += 10
@@ -482,15 +496,12 @@ def compute_readability_score(metrics: dict, thresholds: Thresholds) -> int:
         score += 6
     elif rot <= 10:
         score += 3
-    else:
-        score += 0
 
     return int(round(min(100.0, max(0.0, score))))
 
 
 def classify_risk(score: int, metrics: dict, thresholds: Thresholds) -> tuple[str, str]:
     """Ritorna (risk_class, action)."""
-    # Override: RED forzato se metriche critiche
     if metrics.get("ocr_confidence", 1.0) < 0.40:
         return "RED", "human_review"
     if metrics.get("chars_per_page", 9999) < 50:
@@ -504,10 +515,7 @@ def classify_risk(score: int, metrics: dict, thresholds: Thresholds) -> tuple[st
 
 
 def _estimate_rotation_pdf(file_path: str) -> float:
-    """
-    Stima grezza rotazione media: Tesseract OSD se disponibile,
-    altrimenti 0. Deterministico ma opzionale.
-    """
+    """Stima rotazione media: Tesseract OSD se disponibile, altrimenti 0."""
     try:
         doc = fitz.open(file_path)
         page = doc[0]
@@ -627,7 +635,6 @@ def preflight_check(file_path: str, file_id: str = "unknown",
     metrics["extraction_method"] = extraction_method
     metrics["text_length"] = len(raw_text)
 
-    # Warning automatici
     if metrics["noise_ratio"] > thresholds.max_noise_ratio:
         warnings.append("high_noise_ratio")
     if lang_conf < thresholds.min_language_confidence:

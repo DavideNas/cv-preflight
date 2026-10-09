@@ -4,7 +4,7 @@ Microservizio per il **pre-flight check di leggibilità**, l'**estrazione testo*
 
 Progetto pilota per l'automazione del processo di recruiting di una PMI italiana, in conformità con **GDPR**, **AI Act Europeo (art. 6)** e **CCNL italiano**.
 
-**Versione attuale**: `1.1.0`
+**Versione attuale**: `1.1.1`
 
 ---
 
@@ -52,7 +52,7 @@ Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, n
 |---|---|
 | API | FastAPI + Uvicorn |
 | PDF nativo | pdfplumber + PyMuPDF |
-| PDF scansionato | OCRmyPDF + Tesseract |
+| PDF scansionato | OCRmyPDF + Tesseract (fallback PyMuPDF + Tesseract) |
 | DOCX | python-docx |
 | Immagini | Tesseract + Pillow |
 | Rilevamento lingua | langdetect |
@@ -96,7 +96,7 @@ docker compose up -d
 
 ```bash
 curl http://localhost:8080/health
-# → {"status":"ok","version":"1.1.0"}
+# → {"status":"ok","version":"1.1.1"}
 ```
 
 ---
@@ -169,6 +169,40 @@ curl -X POST http://localhost:8080/extract \
 **Override RED automatico** se:
 - `ocr_confidence < 0.40`
 - `chars_per_page < 50`
+
+---
+
+## 🔄 Pipeline di estrazione
+
+Il sistema sceglie il metodo di estrazione in base al MIME e alla natura del documento:
+
+```
+[File in input]
+    ↓
+[detect_mime()]
+    ↓
+┌───────────────┬────────────────┬──────────────┐
+│ PDF           │ Immagine       │ DOCX         │
+│               │                │              │
+│ Nativo?       │ Tesseract      │ python-docx  │
+│ ├─ SÌ →       │ diretto        │              │
+│ │  pdfplumber │                │              │
+│ │             │                │              │
+│ └─ NO →       │                │              │
+│    OCRmyPDF   │                │              │
+│    (fallback  │                │              │
+│     Tesseract)│                │              │
+└───────────────┴────────────────┴──────────────┘
+```
+
+### Fallback OCR (v1.1.1)
+
+Per i PDF scansionati, il sistema usa un doppio tentativo:
+
+1. **Primario**: `OCRmyPDF --sidecar` (produce testo + PDF con layer OCR)
+2. **Fallback**: se il sidecar è vuoto, ogni pagina viene renderizzata con **PyMuPDF** e processata con **Tesseract** direttamente
+
+Questo garantisce **graceful degradation** su PDF problematici (corrotti, layout anomali, versioni OCRmyPDF con regressioni).
 
 ---
 
@@ -265,8 +299,6 @@ Per aggiungere un'agenzia, basta modificare il YAML e riavviare il container.
 
 **Input**: `Davide_Naselli_Resume.pdf` (3 pagine, 127 KB, PDF nativo)
 
-**Risultato**:
-
 | Campo | Valore |
 |---|---|
 | `mime_type` | `application/pdf` |
@@ -278,19 +310,51 @@ Per aggiungere un'agenzia, basta modificare il YAML e riavviare il container.
 | `chars_per_page` | 2495 |
 | `ocr_confidence` | 1.0 (nessun OCR) |
 | `noise_ratio` | 0.055 |
-| `language_detected` | `en` (confidence 0.99999) |
+| `language_detected` | `en` |
 | `agency_protection.detected` | `false` |
 | `warnings` | `[]` |
 
-**Esito**: ✅ Il sistema ha correttamente:
-- Rilevato il MIME
-- Identificato il PDF come nativo (no OCR)
-- Estratto testo pulito e ordinato
-- Classificato il documento come GREEN (procedi senza intervento umano)
-- Rilevato la lingua inglese con altissima confidenza
-- Escluso la presenza di agenzia (CV diretto)
-
 **Costo LLM**: **0€** (nessuna chiamata)
+
+### Test 2 — CV JPG (immagine)
+
+**Input**: `graphic_designer_cv.jpg` (immagine, 1 pagina)
+
+| Campo | Valore |
+|---|---|
+| `mime_type` | `image/jpeg` |
+| `extraction_method` | `tesseract` |
+| `readability_score` | **98** |
+| `risk_class` | **GREEN** |
+| `text_length` | 3548 |
+| `agency_protection.detected` | `false` |
+
+### Test 3 — CV WebP (immagine)
+
+**Input**: `graphic_designer_cv.webp` (immagine, 1 pagina)
+
+| Campo | Valore |
+|---|---|
+| `mime_type` | `image/webp` |
+| `extraction_method` | `tesseract` |
+| `readability_score` | **98** |
+| `risk_class` | **GREEN** |
+| `action` | `proceed` |
+
+### Test 4 — CV PDF scansionato
+
+**Input**: `graphic_designer_cv.pdf` (immagine dentro PDF, 1 pagina)
+
+| Campo | Valore |
+|---|---|
+| `mime_type` | `application/pdf` |
+| `extraction_method` | `ocrmypdf` |
+| `readability_score` | **85-95** |
+| `risk_class` | **GREEN** |
+| `text_length` | **3577** |
+| `agency_protection.detected` | `false` |
+
+**Nota**: prima del fix v1.1.1, questo caso falliva (`text_length: 0`, `score: 10`, `RED`).
 
 ---
 
@@ -352,6 +416,12 @@ cv-preflight/
 ---
 
 ## 📝 Changelog
+
+### v1.1.1
+- 🐛 Fix OCRmyPDF: rimosso `--output-type none` (causava sidecar vuoto)
+- 🐛 Fix OCRmyPDF: rimosso `--image-dpi` (ignorato sui PDF, generava warning)
+- ✨ Aggiunto fallback PyMuPDF + Tesseract se OCRmyPDF produce sidecar vuoto
+- 🔧 Refactoring: `run_ocr_pdf()` ora orchestra `_try_ocrmypdf()` + `_try_pymupdf_tesseract()`
 
 ### v1.1.0
 - ✨ Aggiunto rilevamento agency protection (header agenzia HR)

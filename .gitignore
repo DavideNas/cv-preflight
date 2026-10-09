@@ -102,6 +102,12 @@ samples/*.jpg
 samples/*.png
 !samples/.gitkeep
 
+*.pdf
+*.docx
+*.doc
+!docs/**/*.pdf
+local-test-cvs/
+
 # Output locali
 logs/
 tmp/

@@ -5,9 +5,9 @@ Endpoint:
   GET  /health    → healthcheck
   GET  /          → info servizio
 
-Versione: 1.1.0
+Versione: 1.1.1
 Changelog:
-    - 1.1.0: Aggiunto blocco agency_protection nell'output
+    - 1.1.1: Aggiunto blocco agency_protection nell'output
     - 1.0.0: Prima versione (preflight check base)
 """
 
@@ -30,7 +30,7 @@ from preflight_check import preflight_check, PreflightResult
 # ============================================================
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 ALLOWED_MIMES = {
     "application/pdf",
