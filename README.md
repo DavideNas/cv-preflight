@@ -8,6 +8,27 @@ Progetto pilota per l'automazione del processo di recruiting di una PMI italiana
 
 ---
 
+## 📖 In breve (per recruiter e stakeholder)
+
+Questo sistema **automatizza la prima fase di screening dei CV**:
+
+1. **Riceve un CV** (PDF, immagine, DOCX)
+2. **Verifica se è leggibile** — se è una scansione sfocata o un formato strano, lo segnala
+3. **Estrae i dati** in modo strutturato: nome, contatti, esperienze, competenze, lingue, disponibilità
+4. **Riconosce se il CV arriva da un'agenzia HR** (con dati sensibili rimossi)
+5. **Instrada il CV** verso il percorso corretto:
+   - 🟢 **GREEN** → CV leggibile, procedi automaticamente
+   - 🟡 **YELLOW** → CV leggibile con riserve, procedi con flag
+   - 🔴 **RED** → CV illeggibile, richiede revisione umana
+
+**Vantaggi**:
+- ⏱️ **Tempo di valutazione**: da 20 minuti a **meno di 2 minuti** per CV
+- 🎯 **Consistenza**: stesso CV + stessa JD → stesso risultato
+- 📊 **Tracciabilità**: ogni decisione è tracciata con metriche oggettive
+- 🛡️ **Compliance**: GDPR, AI Act, CCNL
+
+---
+
 ## 🎯 Obiettivo
 
 Prima di inviare un CV a un LLM per scoring e valutazione, il sistema:
@@ -46,6 +67,124 @@ Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, n
 
 ---
 
+## 🔄 Pipeline completa (end-to-end)
+
+Il sistema è composto da **due componenti principali** che lavorano insieme:
+
+1. **`cv-extractor`** (microservizio Python) → preflight check deterministico
+2. **`n8n`** (orchestratore) → workflow che chiama il microservizio + LLM + routing
+
+### Diagramma del workflow n8n
+
+![Workflow n8n — Fase 21](docs/workflow-fase21.png)
+
+### Flusso dettagliato
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. TRIGGER                                                  │
+│    Manual Trigger (in produzione: IMAP trigger su email)    │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. LETTURA CV                                               │
+│    Read CV from Disk → /data/local-test-cvs/                │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. PREFLIGHT CHECK (cv-extractor)                           │
+│    - Rileva MIME                                            │
+│    - Estrae testo (nativo/OCR)                              │
+│    - Calcola metriche (score, lingua, rumore)               │
+│    - Rileva agency protection                               │
+│    - Classifica rischio (GREEN/YELLOW/RED)                  │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 4. ESTRAZIONE LLM (AI Agent + Claude Sonnet)                │
+│    - System prompt: regole + schema JSON                    │
+│    - User prompt: raw_text + metadati preflight             │
+│    - Temperatura 0 → determinismo                           │
+│    - Output: JSON strutturato                               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 5. PARSING + VALIDAZIONE                                    │
+│    - Converte stringa JSON in oggetto                       │
+│    - Verifica campi obbligatori                             │
+│    - Rispetta agency protection (campi attesi mancanti)     │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 6. ROUTING (Color Switch)                                   │
+│    - GREEN + valid  → ✅ Proceed (GREEN)                    │
+│    - YELLOW + valid → ⚠️ Proceed with flag (YELLOW)         │
+│    - RED o invalid  → 🚨 Human Review Required              │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 7. AZIONI                                                   │
+│    - GREEN/YELLOW: prosegui al matching con JD (Fase 22)    │
+│    - RED/invalid: notifica Telegram al recruiter            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Cosa fa ogni nodo
+
+| # | Nodo | Cosa fa | Perché è importante |
+|---|---|---|---|
+| 1 | **Manual Trigger** | Avvia il workflow | In produzione: trigger email/ATS |
+| 2 | **Read CV from Disk** | Legge il CV dal filesystem | Test locale; in produzione: allegato email |
+| 3 | **Call CV preflight API** | Chiama `cv-extractor` via HTTP | Estrazione testo + metriche deterministiche |
+| 4 | **AI Agent for CV analysis** | Estrae dati strutturati con Claude | LLM lavora su testo già pulito |
+| 5 | **Output parser** | Converte stringa JSON in oggetto | Normalizza l'output LLM |
+| 6 | **Traffic Light Validation** | Verifica campi obbligatori | Blocca CV incompleti |
+| 7 | **Color Switch** | Smista per `risk_class` + `valid` | Routing deterministico |
+| 8 | **✅ Proceed (GREEN)** | Casi GREEN validi | Procedi automaticamente |
+| 9 | **⚠️ Proceed with flag (YELLOW)** | Casi YELLOW validi | Procedi con flag di attenzione |
+| 10 | **🚨 Human Review Required** | Casi RED o invalid | Notifica Telegram al recruiter |
+| 11 | **Notify parser error message** | Errori parsing JSON | Tracciabilità errori |
+| 12 | **Notify AI error message** | Errori AI Agent | Tracciabilità errori |
+
+### Gestione errori
+
+| Errore | Nodo | Azione |
+|---|---|---|
+| AI Agent fallisce | `Notify AI error message` | Telegram + log |
+| JSON malformato | `Notify parser error message` | Telegram + log |
+| CV illeggibile (RED) | `🚨 Human Review Required` | Telegram + human review |
+| Campi obbligatori mancanti | `🚨 Human Review Required` | Telegram + human review |
+
+### Data Pinning (per test senza costi)
+
+Il workflow usa **Data Pinning** su:
+- `AI Agent for CV analysis` 📌
+- `Output parser` 📌
+
+Questo permette di testare i nodi a valle (validazione, switch, Telegram) **senza rieseguire le chiamate LLM**, risparmiando token e tempo.
+
+⚠️ **Importante**: il pinning funziona solo per esecuzioni manuali. In produzione, i dati pinned vengono ignorati.
+
+### Import del workflow in n8n
+
+1. n8n → **Workflows** → **Import from File**
+2. Seleziona `workflows/fase21_cv_preflight.json`
+3. Configura le credenziali:
+   - **Anthropic**: la tua API key
+   - **Telegram**: token del bot `Brick Point HR`
+4. Verifica che `cv-extractor` sia raggiungibile: `http://cv-preflight-extractor:8080/health`
+5. Esegui
+
+### Prossimi step (Fase 22)
+
+Il workflow Fase 21 si ferma all'estrazione. La **Fase 22** (scoring vs JD) aggiungerà:
+- Input: JD strutturata
+- Matching deterministico (competenze, anni, titoli)
+- Scoring LLM (giudizio complessivo)
+- Decisione finale + human-in-the-loop
+
+---
+
 ## 📦 Stack
 
 | Componente | Tecnologia |
@@ -74,7 +213,7 @@ Il pre-flight check è **completamente deterministico**: nessuna chiamata LLM, n
 - Docker + Docker Compose
 - Portainer (o Docker Compose CLI)
 - Accesso a GHCR (il package è pubblico, quindi pull anonimo)
-- **CV di test copiati in `/opt/cv-test-data/`** (vedi sezione "Test Data Volume")
+- **CV di test copiati in `/opt/cv-test-data/`** (vedi sezione "Ingestion del CV")
 
 ### Con Portainer
 
@@ -120,29 +259,113 @@ curl http://localhost:8080/health
 
 ---
 
-## 🗂️ Test Data Volume
+## 📥 Ingestion del CV (test)
 
-Lo stack monta `/opt/cv-test-data` (read-only) dentro il container n8n, al path `/data/local-test-cvs`. Questo permette a n8n di leggere i CV di test **senza includerli nel repository** (compliance GDPR).
+### Flusso attuale
+
+Il workflow n8n legge il CV da una **cartella locale montata come volume**:
+
+```
+[Host Linux]
+    /opt/cv-test-data/                          ← cartella reale (host)
+        ├── Davide_Naselli_Resume.pdf
+        ├── graphic_designer_cv.pdf
+        ├── graphic_designer_cv.jpg
+        └── graphic_designer_cv.webp
+            ↓ (bind-mount read-only)
+[Container cv-preflight-n8n]
+    /data/local-test-cvs/                       ← path interno (container)
+        └── (stessi file)
+            ↓ (nodo "Read CV from Disk")
+[Workflow n8n]
+    fileSelector: "/data/local-test-cvs/<file>.pdf"
+```
 
 ### Popolare il volume
 
 ```bash
-# Crea la cartella
+# 1. Crea la cartella (una sola volta)
 sudo mkdir -p /opt/cv-test-data
 
-# Copia i CV
+# 2. Copia i CV
 sudo cp ~/Scrivania/TestOneblade/cv-preflight/local-test-cvs/* /opt/cv-test-data/
 
-# Permessi
+# 3. Permessi (leggibili dal container n8n)
 sudo chmod 755 /opt/cv-test-data
 sudo chmod 644 /opt/cv-test-data/*
 ```
+
+### Come il workflow legge il CV
+
+Il nodo **`Read CV from Disk`** ha un path **hardcoded**:
+
+```
+fileSelector: "/data/local-test-cvs/Davide_Naselli_Resume.pdf"
+```
+
+⚠️ **Attenzione**: il path è **dentro il container n8n**, non sul host. Quindi:
+- ❌ `/opt/cv-test-data/Davide_Naselli_Resume.pdf` (path host)
+- ✅ `/data/local-test-cvs/Davide_Naselli_Resume.pdf` (path container)
+
+### Come cambiare CV
+
+**Opzione A — Modifica il path nel nodo (manuale)**
+
+1. Apri il nodo `Read CV from Disk`
+2. Cambia il campo `File(s) Selector`:
+   ```
+   /data/local-test-cvs/graphic_designer_cv.pdf
+   ```
+3. Esegui il workflow
+
+**Opzione B — Usa un'espressione dinamica**
+
+Nel nodo `Read CV from Disk`, sostituisci il path con:
+```
+/data/local-test-cvs/{{ $json.filename }}
+```
+
+E aggiungi un nodo **Set** a monte con:
+- **Name**: `filename`
+- **Value**: `Davide_Naselli_Resume.pdf`
+
+**Opzione C — Processa tutti i CV (batch)**
+
+Usa il nodo `Read/Write Files from Disk` con:
+- **File(s) Selector**: `/data/local-test-cvs/*.pdf`
+
+Così il workflow processa **tutti i PDF** nella cartella.
 
 ### Perché path assoluto?
 
 Portainer clona il repository nella propria directory di lavoro (`/data/compose/<stack-id>/`). I path **relativi** nel compose (come `./local-test-cvs`) risolvono a directory vuote dentro l'albero di Portainer, **non** al filesystem locale dell'utente.
 
 Usando `/opt/cv-test-data` (assoluto), il bind-mount punta a una directory reale del host.
+
+### In produzione (design)
+
+In un sistema reale, l'ingestion avviene via:
+
+1. **Email** (casella `cv@azienda.it`):
+   - n8n `Email Trigger (IMAP)` → scarica gli allegati
+   - Gli allegati vengono salvati in `/tmp` e processati
+
+2. **ATS** (integrazione con Applicant Tracking System):
+   - Webhook HTTP da ATS → n8n
+   - L'ATS invia il CV come payload multipart
+
+3. **Upload web** (form pubblico):
+   - Webhook HTTP da form → n8n
+   - Il CV arriva come file binario
+
+Per il test attitudinale, viene usata la modalità **cartella locale**, che è **riproducibile e dimostrabile** senza dipendenze esterne.
+
+### GDPR
+
+I CV di test sono montati da `/opt/cv-test-data` (**read-only**) e **non versionati** nel repository. Questo garantisce:
+- ✅ Nessun dato personale nel repo
+- ✅ I CV restano sul filesystem locale
+- ✅ Il container li legge solo in lettura
 
 ---
 
@@ -451,6 +674,10 @@ cv-preflight/
 ├── .github/
 │   └── workflows/
 │       └── build-push.yml
+├── docs/
+│   └── workflow-fase21.png          ← screenshot del workflow n8n
+├── workflows/
+│   └── fase21_cv_preflight.json     ← export del workflow n8n
 └── cv-extractor/
     ├── Dockerfile
     ├── requirements.txt

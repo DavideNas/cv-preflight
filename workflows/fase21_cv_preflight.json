@@ -1,0 +1,760 @@
+{
+  "name": "CV Preflight — Fase 21",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cfc46a51-afad-4323-a9bc-07dfada602c0",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6",
+          "cachedResultName": "Claude Sonnet 4.6"
+        },
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.5,
+      "position": [
+        624,
+        208
+      ],
+      "id": "8e48f3e6-3f5d-4f45-a36a-dadc186da13b",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "v8FNADZE2q8ZnaPA",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawText = $input.item.json.output;\nconst cleanText = rawText.replace(/```json/g, \"\").replace(/```/g, \"\").trim();\nconst parsed = JSON.parse(cleanText);\n\nreturn [{ json: parsed }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        -144
+      ],
+      "id": "dd3a4662-8705-4f57-98f9-98e58d2d2dc8",
+      "name": "Output parser",
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const axios = require('axios');\nconst FormData = require('form-data');\n\n// Recupera il file binario dal nodo precedente\nconst binaryData = items[0].binary.data;\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n\n// Prepara il form-data\nconst form = new FormData();\nform.append('file', buffer, {\n  filename: binaryData.fileName,\n  contentType: binaryData.mimeType,\n});\n\n// Invia la richiesta a cv-extractor\nconst response = await axios.post('http://cv-preflight-extractor:8080/extract', form, {\n  headers: {\n    ...form.getHeaders(),\n  },\n});\n\n// Restituisci la risposta JSON di cv-extractor\nreturn [{ json: response.data }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "2c90a838-6d4e-4c08-94a6-ae614d7ecd10",
+      "name": "Call CV preflight API",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/local-test-cvs/Davide_Naselli_Resume.pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        208,
+        0
+      ],
+      "id": "99198cf5-af03-4406-b261-2fcd3f6136b9",
+      "name": "Read CV from Disk"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Estrai i dati dal seguente CV e restituisci SOLO il JSON strutturato.\n\n═══════════════════════════════════════════════════════════════\nMETADATI PRE-FLIGHT (contesto, non estrarre)\n═══════════════════════════════════════════════════════════════\n\nFile ID: {{ $json.file_id }}\nLingua rilevata: {{ $json.metrics.language_detected }}\nConfidence lingua: {{ $json.metrics.language_confidence }}\nReadability score: {{ $json.readability_score }}\nRisk class: {{ $json.risk_class }}\nMetodo estrazione: {{ $json.extraction_method }}\nPagine: {{ $json.pages }}\nLunghezza testo: {{ $json.raw_text_length }} caratteri\n\n═══════════════════════════════════════════════════════════════\nAGENCY PROTECTION\n═══════════════════════════════════════════════════════════════\n\nDetected: {{ $json.agency_protection.detected }}\nConfidence: {{ $json.agency_protection.confidence }}\nAgency name: {{ $json.agency_protection.agency_name || \"null\" }}\nMatch type: {{ $json.agency_protection.match_type }}\nSensitive data present: {{ $json.agency_protection.sensitive_data_present }}\nExpected missing fields: {{ JSON.stringify($json.agency_protection.expected_missing_fields) }}\n\n═══════════════════════════════════════════════════════════════\nWARNINGS\n═══════════════════════════════════════════════════════════════\n\n{{ JSON.stringify($json.warnings) }}\n\n═══════════════════════════════════════════════════════════════\nTESTO DEL CV\n═══════════════════════════════════════════════════════════════\n\n{{ $json.raw_text }}\n\n═══════════════════════════════════════════════════════════════\nISTRUZIONI FINALI\n═══════════════════════════════════════════════════════════════\n\nRestituisci SOLO il JSON secondo lo schema definito nel system prompt.\nNessun testo fuori dal JSON.\nNessun markdown.",
+        "options": {
+          "systemMessage": "Sei un estrattore di dati da CV. Il tuo unico compito è trasformare il testo grezzo di un curriculum vitae in un JSON strutturato secondo uno schema fisso.\n\nNon sei un valutatore. Non esprimi giudizi. Non confronti con Job Description. Estrai solo ciò che è presente nel testo.\n\n═══════════════════════════════════════════════════════════════\nREGOLE FONDAMENTALI\n═══════════════════════════════════════════════════════════════\n\n1. ANTI-ALLUCINAZIONE (la regola più importante)\n   - Estrai SOLO informazioni presenti nel testo\n   - Se un campo non è presente → null (o [] per array)\n   - Se un campo è ambiguo → compila con il valore più probabile e marca confidence: \"low\"\n   - NON inventare MAI: competenze, date, titoli, aziende, tecnologie, certificazioni\n   - NON dedurre competenze da ruoli (\"è un developer\" ≠ \"sa Python\")\n   - Se hai dubbi su un valore, meglio null che un valore inventato\n\n2. DETERMINISMO\n   - Stesso input → stesso output, sempre\n   - Non aggiungere creatività, commenti, spiegazioni\n   - Non parafrasare: usa le parole del CV dove possibile\n   - Output: SOLO JSON valido, nessun testo fuori dal JSON\n\n3. NORMALIZZAZIONE\n   - Date: ISO 8601 → \"YYYY-MM\" per mesi, \"YYYY-MM-DD\" per date complete\n     Esempi: \"January 2020\" → \"2020-01\", \"15/03/2018\" → \"2018-03-15\"\n   - Valute: codice ISO 4217 → EUR, USD, GBP (mai simboli €/$/£)\n   - Livelli lingua: QCER → native, C2, C1, B2, B1, A2, A1\n     Esempi: \"madrelingua\" → \"native\", \"fluente\" → \"C1\", \"buono\" → \"B2\"\n   - Paesi/città: lascia come nel CV (non tradurre)\n   - URL: lascia come nel CV (non aggiungere https:// se assente)\n\n4. STRUTTURA OUTPUT\n   - Ogni blocco ha un campo \"confidence\": high | medium | low\n   - confidence = \"high\": dato esplicito e non ambiguo nel CV\n   - confidence = \"medium\": dato deducibile ma non esplicito, o parzialmente ambiguo\n   - confidence = \"low\": dato ambiguo, incompleto, o inferito con bassa certezza\n   - I campi mancanti sono null (non stringa vuota, non \"N/A\")\n\n5. LINGUA\n   - Estrai i valori nella LINGUA ORIGINALE del CV\n   - Non tradurre nomi di aziende, ruoli, tecnologie, città\n   - Esempio: \"Senior Software Engineer\" rimane \"Senior Software Engineer\", non \"Ingegnere Software Senior\"\n\n═══════════════════════════════════════════════════════════════\nGESTIONE CV ANONIMIZZATI (AGENZIE HR)\n═══════════════════════════════════════════════════════════════\n\nAlcuni CV arrivano da agenzie HR intermediarie che rimuovono i dati sensibili.\nIl campo \"agency_protection\" nell'input ti dice se questo è il caso.\n\nSe agency_protection.detected = true:\n  - I campi in agency_protection.expected_missing_fields POTREBBERO essere null\n  - Questo è NORMALE e VOLUTO, non è un errore\n  - Compila agency_protected.value = true\n  - Compila agency_protected.agency_name = agency_protection.agency_name\n  - Compila agency_protected.sensitive_data_present = agency_protection.sensitive_data_present\n  - NON cercare di dedurre i dati rimossi da altre parti del CV\n  - Per i campi attesi mancanti, usa null con confidence: \"high\" (la mancanza è certa)\n\nSe agency_protection.detected = false:\n  - Compila agency_protected.value = false\n  - Compila agency_protected.agency_name = null\n  - Compila agency_protected.sensitive_data_present = null\n  - Applica la logica standard: se un campo è null, è davvero mancante\n\n═══════════════════════════════════════════════════════════════\nSCHEMA JSON OUTPUT (obbligatorio, struttura esatta)\n═══════════════════════════════════════════════════════════════\n\n{\n  \"candidate\": {\n    \"full_name\": \"string | null\",\n    \"email\": \"string | null\",\n    \"phone\": \"string | null\",\n    \"location\": \"string | null\",\n    \"date_of_birth\": \"YYYY-MM-DD | null\",\n    \"nationality\": \"string | null\",\n    \"linkedin_url\": \"string | null\",\n    \"github_url\": \"string | null\",\n    \"portfolio_url\": \"string | null\",\n    \"confidence\": \"high | medium | low\"\n  },\n  \"headline\": {\n    \"value\": \"string | null\",\n    \"confidence\": \"high | medium | low\"\n  },\n  \"summary\": {\n    \"value\": \"string | null\",\n    \"confidence\": \"high | medium | low\"\n  },\n  \"experience\": [\n    {\n      \"company\": \"string | null\",\n      \"role\": \"string | null\",\n      \"location\": \"string | null\",\n      \"start_date\": \"YYYY-MM | null\",\n      \"end_date\": \"YYYY-MM | null\",\n      \"current\": \"boolean\",\n      \"description\": \"string | null\",\n      \"achievements\": [\"string\"],\n      \"technologies\": [\"string\"],\n      \"confidence\": \"high | medium | low\"\n    }\n  ],\n  \"education\": [\n    {\n      \"institution\": \"string | null\",\n      \"degree\": \"string | null\",\n      \"field\": \"string | null\",\n      \"location\": \"string | null\",\n      \"start_date\": \"YYYY-MM | null\",\n      \"end_date\": \"YYYY-MM | null\",\n      \"confidence\": \"high | medium | low\"\n    }\n  ],\n  \"skills\": {\n    \"technical\": [\"string\"],\n    \"soft\": [\"string\"],\n    \"tools\": [\"string\"],\n    \"languages\": [\n      {\n        \"language\": \"string\",\n        \"level\": \"native | C2 | C1 | B2 | B1 | A2 | A1 | null\",\n        \"certification\": \"string | null\"\n      }\n    ],\n    \"confidence\": \"high | medium | low\"\n  },\n  \"certifications\": [\n    {\n      \"name\": \"string\",\n      \"issuer\": \"string | null\",\n      \"date\": \"YYYY-MM | null\",\n      \"confidence\": \"high | medium | low\"\n    }\n  ],\n  \"projects\": [\n    {\n      \"name\": \"string\",\n      \"description\": \"string | null\",\n      \"technologies\": [\"string\"],\n      \"start_date\": \"YYYY-MM | null\",\n      \"end_date\": \"YYYY-MM | null\",\n      \"confidence\": \"high | medium | low\"\n    }\n  ],\n  \"availability\": {\n    \"work_mode\": \"full-time | part-time | contract | freelance | null\",\n    \"remote\": \"boolean | null\",\n    \"relocation\": \"boolean | null\",\n    \"travel\": \"boolean | null\",\n    \"notice_period\": \"string | null\",\n    \"confidence\": \"high | medium | low\"\n  },\n  \"salary_expectation\": {\n    \"value\": \"number | null\",\n    \"currency\": \"EUR | USD | GBP | null\",\n    \"period\": \"yearly | monthly | daily | hourly | null\",\n    \"confidence\": \"high | medium | low\"\n  },\n  \"agency_protected\": {\n    \"value\": \"boolean\",\n    \"agency_name\": \"string | null\",\n    \"sensitive_data_present\": \"boolean | null\"\n  },\n  \"extraction_metadata\": {\n    \"extraction_version\": \"1.0.0\",\n    \"extraction_timestamp\": \"ISO 8601\",\n    \"language_source\": \"string | null\",\n    \"overall_confidence\": \"high | medium | low\"\n  }\n}\n\n═══════════════════════════════════════════════════════════════\nCRITERI PER overall_confidence\n═══════════════════════════════════════════════════════════════\n\n- \"high\":   ≥ 80% dei blocchi hanno confidence: \"high\"\n- \"medium\": tra 50% e 80% dei blocchi hanno confidence: \"high\"\n- \"low\":    < 50% dei blocchi hanno confidence: \"high\"\n\n═══════════════════════════════════════════════════════════════\nREGOLE FINALI\n═══════════════════════════════════════════════════════════════\n\n- Output: SOLO il JSON. Nessun testo prima, nessun testo dopo.\n- Nessun commento, nessuna spiegazione, nessun markdown.\n- Se il CV è vuoto o illeggibile, restituisci comunque il JSON con tutti i campi null e confidence: \"low\".\n- La lingua di output dei VALORI è quella originale del CV.\n- I campi descrittivi (null) NON vanno mai riempiti con placeholder tipo \"N/A\", \"Unknown\", \"-\"."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        624,
+        0
+      ],
+      "id": "a8427c60-71e3-4b5b-ad8b-2894cf6a4d83",
+      "name": "AI Agent for CV analysis",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "52424750",
+        "text": "=⚠️ Errore AI Agent — Fase 21  📄 File: {{ $('Read CV from Disk').item.json.fileName }} ❌ Errore: {{ $json.error?.message || $json.error || 'Errore sconosciuto' }}  Verifica manuale richiesta.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        944,
+        128
+      ],
+      "id": "71cb2a5d-2963-4f32-a026-ed42c0f724af",
+      "name": "Notify AI error message",
+      "webhookId": "ac644cf9-41df-4d96-bdff-33c369ec4f21",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": {
+          "id": "t5i8Dv4a9NoGjUhk",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "52424750",
+        "text": "=⚠️ Errore Parsing JSON — Fase 21  📄 File: {{ $('Read CV from Disk').item.json.fileName }} ❌ Errore: {{ $json.error?.message || $json.error || 'Errore sconosciuto' }}  L'AI Agent ha prodotto un JSON non valido. Verifica manuale richiesta.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        -64
+      ],
+      "id": "801871ea-42fe-4f11-918a-4f2b8c6c860e",
+      "name": "Notify parser error message",
+      "webhookId": "8486bea3-0cfb-4d91-bf99-212297252e0d",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": {
+          "id": "t5i8Dv4a9NoGjUhk",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst preflight = $('Call CV preflight API').first().json;\n\nconst requiredChecks = [\n  { name: 'candidate.full_name', fn: () => data.candidate?.full_name },\n  { name: 'candidate.email_or_phone', fn: () => data.candidate?.email || data.candidate?.phone },\n  { name: 'experience_or_education_or_skills', fn: () =>\n      (data.experience?.length > 0) ||\n      (data.education?.length > 0) ||\n      (data.skills?.technical?.length > 0)\n  }\n];\n\nconst missing = requiredChecks\n  .filter(c => !c.fn())\n  .map(c => c.name);\n\nconst agencyDetected = data.agency_protected?.value === true;\nconst finalMissing = agencyDetected\n  ? missing.filter(m => !['candidate.email_or_phone'].includes(m))\n  : missing;\n\nreturn [{\n  json: {\n    valid: finalMissing.length === 0,\n    missing_fields: finalMissing,\n    agency_protected: agencyDetected,\n    risk_class: preflight.risk_class,\n    readability_score: preflight.readability_score,\n    file_id: preflight.file_id,\n    data: data\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        -272
+      ],
+      "id": "d4d94260-c91a-4d4f-87e1-25b3b24f2df5",
+      "name": "Traffic Light Validation",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "48274187-503d-40e0-9b4c-64456e76adf8",
+                    "leftValue": "={{ $json.risk_class === \"GREEN\" && $json.valid === true }}",
+                    "rightValue": "GREEN-true",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a450fa62-b998-47b9-88c2-9854b9f10954",
+                    "leftValue": "={{ $json.risk_class === \"YELLOW\" && $json.valid === true }}",
+                    "rightValue": "YELLOW-true",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "13c6785c-7edf-4da1-9a4d-380b5237b812",
+                    "leftValue": "={{ $json.risk_class === \"RED\" || $json.valid === false }}",
+                    "rightValue": "true",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1408,
+        -400
+      ],
+      "id": "f2bd8941-4aee-4fd4-9ca2-a7fb1b86285d",
+      "name": "Color Switch"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        -384
+      ],
+      "id": "c399268e-4ab9-494a-af9b-5e214248c5fe",
+      "name": "⚠️ Proceed with flag (YELLOW)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1616,
+        -560
+      ],
+      "id": "d44873fc-d8f3-414f-b3ba-ee9b456e7a3b",
+      "name": "✅ Proceed (GREEN)"
+    },
+    {
+      "parameters": {
+        "chatId": "52424750",
+        "text": "=🎯 CV da rivedere — Fase 21  📄 File: {{ $json.file_id }} 📊 Risk: {{ $json.risk_class }} 🎯 Score: {{ $json.readability_score }}  {{ $json.valid ? '✅ Estrazione valida' : '⚠️ Campi mancanti: ' + $json.missing_fields.join(', ') }}  {{ $json.agency_protected ? '🏢 CV da agenzia HR' : '' }}  Richiede revisione manuale.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1616,
+        -192
+      ],
+      "id": "69bc6696-7b3e-4cf0-af56-ffbea5b9cea2",
+      "name": "🚨 Human Review Required",
+      "webhookId": "95ab94f0-44d8-4ee4-b832-52402076c5f7",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": {
+          "id": "t5i8Dv4a9NoGjUhk",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {
+    "AI Agent for CV analysis": [
+      {
+        "json": {
+          "output": "{\n  \"candidate\": {\n    \"full_name\": \"Davide Naselli\",\n    \"email\": \"d.naselli@gmail.com\",\n    \"phone\": \"+39 3200278227\",\n    \"location\": \"Milan, Italy\",\n    \"date_of_birth\": \"1983-01-20\",\n    \"nationality\": \"Italian\",\n    \"linkedin_url\": \"linkedin.com/in/davide-naselli-92314338\",\n    \"github_url\": \"github.com/DavideNas\",\n    \"portfolio_url\": null,\n    \"confidence\": \"high\"\n  },\n  \"headline\": {\n    \"value\": \"Senior DevOps Engineer\",\n    \"confidence\": \"high\"\n  },\n  \"summary\": {\n    \"value\": \"Senior Platform Engineer and DevSecOps Specialist with over 15 years of IT experience, specializing in cloud-native infrastructure design, IaC automation, and CI/CD pipeline optimization. Proven experience integrating DevSecOps (Shift-Left Security) practices and revamping/assessing complex release management toolchains. Strong expertise in Terraform, Ansible, Jenkins, and Kubernetes.\",\n    \"confidence\": \"high\"\n  },\n  \"experience\": [\n    {\n      \"company\": \"Freelance Specialist & Tech Lead\",\n      \"role\": \"Senior DevOps & Cloud Infrastructure Consultant\",\n      \"location\": \"Milan, Italy\",\n      \"start_date\": \"2015-01\",\n      \"end_date\": null,\n      \"current\": true,\n      \"description\": \"Design and implementation of container-based Cloud-Native architectures (AWS, GCP, Azure), optimizing infrastructure costs and release times. Developed and maintained end-to-end CI/CD pipelines (Jenkins, GitHub Actions, Azure DevOps) using Jenkinsfile in Groovy and Shared Libraries. Automated infrastructure provisioning and configuration using an Infrastructure as Code approach using Terraform (module and state management) and Ansible for application configuration management. Integrating DevSecOps practices into release pipelines through the adoption of security scanning tools (SAST/DAST such as SonarQube, Snyk, Trivy), introducing shift-left security logic and reducing incidents by 30%. Constant collaboration with cross-functional development, security and operations teams to define technical standards, documentation and guidelines for the migration and decommissioning of old release systems.\",\n      \"achievements\": [\n        \"Reduced time to market by 40% and reduced errors in production by 25%\",\n        \"Reduced incidents by 30% through shift-left security logic\"\n      ],\n      \"technologies\": [\"AWS\", \"GCP\", \"Azure\", \"Jenkins\", \"GitHub Actions\", \"Azure DevOps\", \"Groovy\", \"Terraform\", \"Ansible\", \"SonarQube\", \"Snyk\", \"Trivy\"],\n      \"confidence\": \"high\"\n    },\n    {\n      \"company\": \"Codzilla · Ogilvy · Simple Agency · Chapeaux Group · Euro RSCG 4D\",\n      \"role\": \"Full Stack & Web Developer (Freelance)\",\n      \"location\": \"Milan, Italy\",\n      \"start_date\": \"2008-01\",\n      \"end_date\": \"2021-01\",\n      \"current\": false,\n      \"description\": \"Development and maintenance of websites and multimedia applications, increasing customer digital visibility by up to 40% and increasing conversions by 15% for automotive and fashion campaigns. Implementation of modern frontends (React, Angular, PHP) with improved performance and cross-browser compatibility. SEO/UX optimization with 50% reduction in loading time and first-page positioning on Google for strategic keywords. Integrating 3D interfaces and interactive video content for high-impact digital campaigns and creative projects.\",\n      \"achievements\": [\n        \"Increased customer digital visibility by up to 40%\",\n        \"Increased conversions by 15% for automotive and fashion campaigns\",\n        \"50% reduction in loading time\",\n        \"First-page positioning on Google for strategic keywords\"\n      ],\n      \"technologies\": [\"React\", \"Angular\", \"PHP\"],\n      \"confidence\": \"high\"\n    },\n    {\n      \"company\": \"Accenture\",\n      \"role\": \"Junior Tester (Stage)\",\n      \"location\": \"Milan, Italy\",\n      \"start_date\": \"2003-01\",\n      \"end_date\": \"2004-01\",\n      \"current\": false,\n      \"description\": \"QA activities on mission-critical banking projects, with a focus on test automation and SAP process verification.\",\n      \"achievements\": [],\n      \"technologies\": [\"SAP\"],\n      \"confidence\": \"high\"\n    }\n  ],\n  \"education\": [\n    {\n      \"institution\": \"Udemy, Coursera, Pluralsight, and other online platforms\",\n      \"degree\": \"Professional Online Training\",\n      \"field\": \"Software Development, DevOps, Mobile and Web Development, and Game Development\",\n      \"location\": null,\n      \"start_date\": \"2015-01\",\n      \"end_date\": null,\n      \"confidence\": \"high\"\n    },\n    {\n      \"institution\": \"School and Regional Courses – Lombardy Region\",\n      \"degree\": \"Professional Training in Software Development, Enterprise and Web Development\",\n      \"field\": \"Software Development, Enterprise and Web Development\",\n      \"location\": \"Milan, Italy\",\n      \"start_date\": \"2000-01\",\n      \"end_date\": \"2008-01\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"institution\": \"ITIS \\\"Cartesio\\\"\",\n      \"degree\": \"Diploma in Computer Science\",\n      \"field\": \"Computer architecture, programming (low-level and high-level), advanced mathematics, and statistical analysis\",\n      \"location\": \"Milan, Italy\",\n      \"start_date\": \"1997-09\",\n      \"end_date\": \"2002-08\",\n      \"confidence\": \"high\"\n    }\n  ],\n  \"skills\": {\n    \"technical\": [\n      \"Jenkins (Declarative/Scripted and Groovy Pipelines)\",\n      \"GitHub Actions\",\n      \"Azure Pipelines\",\n      \"Git (GitFlow)\",\n      \"Terraform (modules, state, workspace)\",\n      \"Ansible\",\n      \"Prometheus\",\n      \"Grafana\",\n      \"Python\",\n      \"Bash\",\n      \"Docker\",\n      \"Kubernetes (K8s)\",\n      \"AWS\",\n      \"Azure\",\n      \"GCP\",\n      \"Firebase\",\n      \"Supabase\",\n      \"SonarQube\",\n      \"Snyk\",\n      \"Trivy\",\n      \"OWASP ZAP\",\n      \"Checkov\",\n      \"RESTful\",\n      \"GraphQL\",\n      \"SOAP\",\n      \"WebSocket\",\n      \"gRPC\",\n      \"HTTP\",\n      \"TLS\",\n      \"MCP (AI)\",\n      \"Flutter\",\n      \"Kotlin\",\n      \"React Native\",\n      \"SwiftUI\",\n      \"React\",\n      \"Angular\",\n      \"PHP\",\n      \"Spring Security\",\n      \"Unity 3D\"\n    ],\n    \"soft\": [\n      \"Cross-functional collaboration\",\n      \"Technical documentation\",\n      \"Team leadership\"\n    ],\n    \"tools\": [\n      \"Jira\",\n      \"Trello\",\n      \"Slack\",\n      \"Figma\",\n      \"Adobe Suite\",\n      \"Unity 3D\",\n      \"VSCode\",\n      \"IntelliJ\",\n      \"Cursor\",\n      \"Antigravity\",\n      \"Blender\",\n      \"Guitar Pro\"\n    ],\n    \"languages\": [\n      {\n        \"language\": \"Italian\",\n        \"level\": \"native\",\n        \"certification\": null\n      },\n      {\n        \"language\": \"English\",\n        \"level\": \"C1\",\n        \"certification\": \"English language certification (C1), issued by the British Institute (2000)\"\n      }\n    ],\n    \"confidence\": \"high\"\n  },\n  \"certifications\": [\n    {\n      \"name\": \"English language certification (C1)\",\n      \"issuer\": \"British Institute\",\n      \"date\": \"2000-01\",\n      \"confidence\": \"medium\"\n    }\n  ],\n  \"projects\": [\n    {\n      \"name\": \"LoungeDev – SaaS Platform for Cross-Framework Code Migration\",\n      \"description\": \"Developing a SaaS platform that automatically generates and compares code snippets to facilitate migration between frameworks (backend, frontend, mobile). Integrated Anthropic LLMs through a FastAPI backend with Supabase/PostgreSQL caching to ensure semantic consistency while reducing response times and API costs.\",\n      \"technologies\": [\"Astro\", \"React\", \"FastAPI\", \"Supabase\", \"Anthropic (LLM AI)\", \"PostgreSQL\"],\n      \"start_date\": \"2026-03\",\n      \"end_date\": null,\n      \"confidence\": \"high\"\n    },\n    {\n      \"name\": \"Serverless Cloud Automation Experiments\",\n      \"description\": \"Cloud Infrastructure Automation & Orchestration and development of workflows for cloud-native applications, with CI/CD pipelines on GitHub Actions and containerized deployments. Automated provisioning using Terraform and management of Kubernetes clusters using Prometheus and Grafana, in an R&D context oriented towards DevSecOps and Cloud Infrastructure Automation.\",\n      \"technologies\": [\"AWS\", \"Terraform\", \"Kubernetes\", \"GitHub Actions\", \"Prometheus\", \"Grafana\"],\n      \"start_date\": \"2022-01\",\n      \"end_date\": \"2025-01\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"name\": \"Sandbox for Zero-Trust Security and DevSecOps\",\n      \"description\": \"Design and implementation of a secure microservices-based sandbox environment, with complete CI/CD pipelines and integration of modern identity providers (Keycloak, Clerk, Firebase, Supabase). Applying Zero-Trust, secure-by-design, and DevSecOps principles to ensure application security, vulnerability management and secure pipeline design with controlled deployment.\",\n      \"technologies\": [\"GraalVM\", \"Spring Boot\", \"Quarkus\", \"Keycloak\", \"Clerk\", \"Firebase\", \"Supabase\"],\n      \"start_date\": \"2021-01\",\n      \"end_date\": \"2022-01\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"name\": \"Cloud-Connected Mobile Game Prototype\",\n      \"description\": \"Cross-platform mobile prototype development with Flutter and Kotlin, integrated with Unity 3D for gameplay logic and interactive components. Implementation of cloud services (Firebase, Supabase, AWS Lambda) for authentication, user management, and data persistence. Technical prototyping, performance optimization, and containerization of mobile and backend modules.\",\n      \"technologies\": [\"Flutter\", \"Unity 3D\", \"AWS Lambda\", \"REST APIs\", \"Firebase\", \"Supabase\", \"Kotlin\"],\n      \"start_date\": \"2018-01\",\n      \"end_date\": \"2021-01\",\n      \"confidence\": \"high\"\n    },\n    {\n      \"name\": \"Web Designer & Frontend Developer\",\n      \"description\": \"Development and maintenance of high-performance websites and interactive interfaces, with significant improvements in UX and loading times. Design of modular and scalable applications in JavaScript, React, Angular, and PHP, integrated with custom backend systems and optimized for SEO and performance.\",\n      \"technologies\": [\"JavaScript\", \"React\", \"Angular\", \"PHP\"],\n      \"start_date\": \"2008-01\",\n      \"end_date\": \"2012-01\",\n      \"confidence\": \"high\"\n    }\n  ],\n  \"availability\": {\n    \"work_mode\": \"full-time\",\n    \"remote\": true,\n    \"relocation\": true,\n    \"travel\": true,\n    \"notice_period\": null,\n    \"confidence\": \"high\"\n  },\n  \"salary_expectation\": {\n    \"value\": null,\n    \"currency\": null,\n    \"period\": null,\n    \"confidence\": \"high\"\n  },\n  \"agency_protected\": {\n    \"value\": false,\n    \"agency_name\": null,\n    \"sensitive_data_present\": null\n  },\n  \"extraction_metadata\": {\n    \"extraction_version\": \"1.0.0\",\n    \"extraction_timestamp\": \"2025-07-15T00:00:00Z\",\n    \"language_source\": \"en\",\n    \"overall_confidence\": \"high\"\n  }\n}"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Output parser": [
+      {
+        "json": {
+          "candidate": {
+            "full_name": "Davide Naselli",
+            "email": "d.naselli@gmail.com",
+            "phone": "+39 3200278227",
+            "location": "Milan, Italy",
+            "date_of_birth": "1983-01-20",
+            "nationality": "Italian",
+            "linkedin_url": "linkedin.com/in/davide-naselli-92314338",
+            "github_url": "github.com/DavideNas",
+            "portfolio_url": null,
+            "confidence": "high"
+          },
+          "headline": {
+            "value": "Senior DevOps Engineer",
+            "confidence": "high"
+          },
+          "summary": {
+            "value": "Senior Platform Engineer and DevSecOps Specialist with over 15 years of IT experience, specializing in cloud-native infrastructure design, IaC automation, and CI/CD pipeline optimization. Proven experience integrating DevSecOps (Shift-Left Security) practices and revamping/assessing complex release management toolchains. Strong expertise in Terraform, Ansible, Jenkins, and Kubernetes.",
+            "confidence": "high"
+          },
+          "experience": [
+            {
+              "company": "Freelance Specialist & Tech Lead",
+              "role": "Senior DevOps & Cloud Infrastructure Consultant",
+              "location": "Milan, Italy",
+              "start_date": "2015-01",
+              "end_date": null,
+              "current": true,
+              "description": "Design and implementation of container-based Cloud-Native architectures (AWS, GCP, Azure), optimizing infrastructure costs and release times. Developed and maintained end-to-end CI/CD pipelines (Jenkins, GitHub Actions, Azure DevOps) using Jenkinsfile in Groovy and Shared Libraries. Automated infrastructure provisioning and configuration using an Infrastructure as Code approach using Terraform (module and state management) and Ansible for application configuration management. Integrating DevSecOps practices into release pipelines through the adoption of security scanning tools (SAST/DAST such as SonarQube, Snyk, Trivy), introducing shift-left security logic and reducing incidents by 30%. Constant collaboration with cross-functional development, security and operations teams to define technical standards, documentation and guidelines for the migration and decommissioning of old release systems.",
+              "achievements": [
+                "Reduced time to market by 40% and reduced errors in production by 25%",
+                "Reduced incidents by 30% through shift-left security logic"
+              ],
+              "technologies": [
+                "AWS",
+                "GCP",
+                "Azure",
+                "Jenkins",
+                "GitHub Actions",
+                "Azure DevOps",
+                "Groovy",
+                "Terraform",
+                "Ansible",
+                "SonarQube",
+                "Snyk",
+                "Trivy"
+              ],
+              "confidence": "high"
+            },
+            {
+              "company": "Codzilla · Ogilvy · Simple Agency · Chapeaux Group · Euro RSCG 4D",
+              "role": "Full Stack & Web Developer (Freelance)",
+              "location": "Milan, Italy",
+              "start_date": "2008-01",
+              "end_date": "2021-01",
+              "current": false,
+              "description": "Development and maintenance of websites and multimedia applications, increasing customer digital visibility by up to 40% and increasing conversions by 15% for automotive and fashion campaigns. Implementation of modern frontends (React, Angular, PHP) with improved performance and cross-browser compatibility. SEO/UX optimization with 50% reduction in loading time and first-page positioning on Google for strategic keywords. Integrating 3D interfaces and interactive video content for high-impact digital campaigns and creative projects.",
+              "achievements": [
+                "Increased customer digital visibility by up to 40%",
+                "Increased conversions by 15% for automotive and fashion campaigns",
+                "50% reduction in loading time",
+                "First-page positioning on Google for strategic keywords"
+              ],
+              "technologies": [
+                "React",
+                "Angular",
+                "PHP"
+              ],
+              "confidence": "high"
+            },
+            {
+              "company": "Accenture",
+              "role": "Junior Tester (Stage)",
+              "location": "Milan, Italy",
+              "start_date": "2003-01",
+              "end_date": "2004-01",
+              "current": false,
+              "description": "QA activities on mission-critical banking projects, with a focus on test automation and SAP process verification.",
+              "achievements": [],
+              "technologies": [
+                "SAP"
+              ],
+              "confidence": "high"
+            }
+          ],
+          "education": [
+            {
+              "institution": "Udemy, Coursera, Pluralsight, and other online platforms",
+              "degree": "Professional Online Training",
+              "field": "Software Development, DevOps, Mobile and Web Development, and Game Development",
+              "location": null,
+              "start_date": "2015-01",
+              "end_date": null,
+              "confidence": "high"
+            },
+            {
+              "institution": "School and Regional Courses – Lombardy Region",
+              "degree": "Professional Training in Software Development, Enterprise and Web Development",
+              "field": "Software Development, Enterprise and Web Development",
+              "location": "Milan, Italy",
+              "start_date": "2000-01",
+              "end_date": "2008-01",
+              "confidence": "high"
+            },
+            {
+              "institution": "ITIS \"Cartesio\"",
+              "degree": "Diploma in Computer Science",
+              "field": "Computer architecture, programming (low-level and high-level), advanced mathematics, and statistical analysis",
+              "location": "Milan, Italy",
+              "start_date": "1997-09",
+              "end_date": "2002-08",
+              "confidence": "high"
+            }
+          ],
+          "skills": {
+            "technical": [
+              "Jenkins (Declarative/Scripted and Groovy Pipelines)",
+              "GitHub Actions",
+              "Azure Pipelines",
+              "Git (GitFlow)",
+              "Terraform (modules, state, workspace)",
+              "Ansible",
+              "Prometheus",
+              "Grafana",
+              "Python",
+              "Bash",
+              "Docker",
+              "Kubernetes (K8s)",
+              "AWS",
+              "Azure",
+              "GCP",
+              "Firebase",
+              "Supabase",
+              "SonarQube",
+              "Snyk",
+              "Trivy",
+              "OWASP ZAP",
+              "Checkov",
+              "RESTful",
+              "GraphQL",
+              "SOAP",
+              "WebSocket",
+              "gRPC",
+              "HTTP",
+              "TLS",
+              "MCP (AI)",
+              "Flutter",
+              "Kotlin",
+              "React Native",
+              "SwiftUI",
+              "React",
+              "Angular",
+              "PHP",
+              "Spring Security",
+              "Unity 3D"
+            ],
+            "soft": [
+              "Cross-functional collaboration",
+              "Technical documentation",
+              "Team leadership"
+            ],
+            "tools": [
+              "Jira",
+              "Trello",
+              "Slack",
+              "Figma",
+              "Adobe Suite",
+              "Unity 3D",
+              "VSCode",
+              "IntelliJ",
+              "Cursor",
+              "Antigravity",
+              "Blender",
+              "Guitar Pro"
+            ],
+            "languages": [
+              {
+                "language": "Italian",
+                "level": "native",
+                "certification": null
+              },
+              {
+                "language": "English",
+                "level": "C1",
+                "certification": "English language certification (C1), issued by the British Institute (2000)"
+              }
+            ],
+            "confidence": "high"
+          },
+          "certifications": [
+            {
+              "name": "English language certification (C1)",
+              "issuer": "British Institute",
+              "date": "2000-01",
+              "confidence": "medium"
+            }
+          ],
+          "projects": [
+            {
+              "name": "LoungeDev – SaaS Platform for Cross-Framework Code Migration",
+              "description": "Developing a SaaS platform that automatically generates and compares code snippets to facilitate migration between frameworks (backend, frontend, mobile). Integrated Anthropic LLMs through a FastAPI backend with Supabase/PostgreSQL caching to ensure semantic consistency while reducing response times and API costs.",
+              "technologies": [
+                "Astro",
+                "React",
+                "FastAPI",
+                "Supabase",
+                "Anthropic (LLM AI)",
+                "PostgreSQL"
+              ],
+              "start_date": "2026-03",
+              "end_date": null,
+              "confidence": "high"
+            },
+            {
+              "name": "Serverless Cloud Automation Experiments",
+              "description": "Cloud Infrastructure Automation & Orchestration and development of workflows for cloud-native applications, with CI/CD pipelines on GitHub Actions and containerized deployments. Automated provisioning using Terraform and management of Kubernetes clusters using Prometheus and Grafana, in an R&D context oriented towards DevSecOps and Cloud Infrastructure Automation.",
+              "technologies": [
+                "AWS",
+                "Terraform",
+                "Kubernetes",
+                "GitHub Actions",
+                "Prometheus",
+                "Grafana"
+              ],
+              "start_date": "2022-01",
+              "end_date": "2025-01",
+              "confidence": "high"
+            },
+            {
+              "name": "Sandbox for Zero-Trust Security and DevSecOps",
+              "description": "Design and implementation of a secure microservices-based sandbox environment, with complete CI/CD pipelines and integration of modern identity providers (Keycloak, Clerk, Firebase, Supabase). Applying Zero-Trust, secure-by-design, and DevSecOps principles to ensure application security, vulnerability management and secure pipeline design with controlled deployment.",
+              "technologies": [
+                "GraalVM",
+                "Spring Boot",
+                "Quarkus",
+                "Keycloak",
+                "Clerk",
+                "Firebase",
+                "Supabase"
+              ],
+              "start_date": "2021-01",
+              "end_date": "2022-01",
+              "confidence": "high"
+            },
+            {
+              "name": "Cloud-Connected Mobile Game Prototype",
+              "description": "Cross-platform mobile prototype development with Flutter and Kotlin, integrated with Unity 3D for gameplay logic and interactive components. Implementation of cloud services (Firebase, Supabase, AWS Lambda) for authentication, user management, and data persistence. Technical prototyping, performance optimization, and containerization of mobile and backend modules.",
+              "technologies": [
+                "Flutter",
+                "Unity 3D",
+                "AWS Lambda",
+                "REST APIs",
+                "Firebase",
+                "Supabase",
+                "Kotlin"
+              ],
+              "start_date": "2018-01",
+              "end_date": "2021-01",
+              "confidence": "high"
+            },
+            {
+              "name": "Web Designer & Frontend Developer",
+              "description": "Development and maintenance of high-performance websites and interactive interfaces, with significant improvements in UX and loading times. Design of modular and scalable applications in JavaScript, React, Angular, and PHP, integrated with custom backend systems and optimized for SEO and performance.",
+              "technologies": [
+                "JavaScript",
+                "React",
+                "Angular",
+                "PHP"
+              ],
+              "start_date": "2008-01",
+              "end_date": "2012-01",
+              "confidence": "high"
+            }
+          ],
+          "availability": {
+            "work_mode": "full-time",
+            "remote": true,
+            "relocation": true,
+            "travel": true,
+            "notice_period": null,
+            "confidence": "high"
+          },
+          "salary_expectation": {
+            "value": null,
+            "currency": null,
+            "period": null,
+            "confidence": "high"
+          },
+          "agency_protected": {
+            "value": false,
+            "agency_name": null,
+            "sensitive_data_present": null
+          },
+          "extraction_metadata": {
+            "extraction_version": "1.0.0",
+            "extraction_timestamp": "2025-07-15T00:00:00Z",
+            "language_source": "en",
+            "overall_confidence": "high"
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Read CV from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent for CV analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output parser": {
+      "main": [
+        [
+          {
+            "node": "Traffic Light Validation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify parser error message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CV preflight API": {
+      "main": [
+        [
+          {
+            "node": "AI Agent for CV analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CV from Disk": {
+      "main": [
+        [
+          {
+            "node": "Call CV preflight API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent for CV analysis": {
+      "main": [
+        [
+          {
+            "node": "Output parser",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify AI error message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Traffic Light Validation": {
+      "main": [
+        [
+          {
+            "node": "Color Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Color Switch": {
+      "main": [
+        [
+          {
+            "node": "✅ Proceed (GREEN)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Proceed with flag (YELLOW)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🚨 Human Review Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "869fe07d-9949-413b-94bb-c9ea6e166132",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e60a61a09f1e6e6b96d5a28c35c6e9be80f6f759f6cd08b836ee2f7f9a54ffa5"
+  },
+  "nodeGroups": [],
+  "id": "YB9t08nvzlrR91Yi",
+  "tags": []
+}
