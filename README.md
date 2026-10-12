@@ -184,6 +184,23 @@ Il workflow Fase 21 si ferma all'estrazione. La **Fase 22** (scoring vs JD) aggi
 - Decisione finale + human-in-the-loop
 
 ---
+## 📋 Roadmap
+
+Le fasi successive (Fase 22-25) sono documentate in **[ROADMAP.md](ROADMAP.md)**.
+
+| Fase | Descrizione | Stato |
+|---|---|---|
+| Fase 21 | Estrazione dati CV + routing | ✅ **Completa** |
+| Fase 22 | Confronto con JD + scoring | 📋 Design |
+| Fase 23 | Audit log + tracciabilità | 📋 Design |
+| Fase 24 | Comunicazione esito candidato | 📋 Design |
+| Fase 25 | Ingestion email reale (IMAP) | 📋 Design |
+
+**Stima costi** (pipeline completa, 500 CV/mese, con cache intelligente): **~57€/mese** (budget disponibile: 500€/mese).
+
+Vedi [ROADMAP.md](ROADMAP.md) per il design dettagliato di ogni fase.
+
+---
 
 ## 📦 Stack
 
